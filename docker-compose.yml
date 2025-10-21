@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  # Dispatcher - Aplicación principal (sin Redis, usa almacenamiento en memoria)
+  dispatcher:
+    build:
+      context: .
+      target: runtime
+    container_name: dispatcher-app
+    ports:
+      - "8080:8080"
+    environment:
+      - NODE_ENV=development
+    env_file:
+      - .env
+    volumes:
+      # Hot reload en desarrollo - montar código fuente
+      - ./src:/app/src
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8080/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

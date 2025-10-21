@@ -1,0 +1,73 @@
+### Test de envío de botones a WhatsApp
+### Asegúrate de tener REST Client instalado en VSCode
+
+### 1. ENVIAR BOTONES SIMPLES
+POST http://localhost:8081/enviar
+Content-Type: application/json
+X-API-Key: LO_QUE_QUIERAS
+
+{
+  "numero": "5493534193971",
+  "body_text": "¿Qué opción prefieres?",
+  "header_text": "Menú de opciones",
+  "footer_text": "Elige una opción",
+  "buttons": [
+    {
+      "type": "reply",
+      "reply": {
+        "id": "btn_opcion_1",
+        "title": "Opción 1"
+      }
+    },
+    {
+      "type": "reply",
+      "reply": {
+        "id": "btn_opcion_2",
+        "title": "Opción 2"
+      }
+    },
+    {
+      "type": "reply",
+      "reply": {
+        "id": "btn_opcion_3",
+        "title": "Opción 3"
+      }
+    }
+  ]
+}
+
+### 2. ENVIAR SOLO 2 BOTONES (sin header/footer)
+POST http://localhost:8081/enviar
+Content-Type: application/json
+X-API-Key: LO_QUE_QUIERAS
+
+{
+  "numero": "5493534193971",
+  "body_text": "¿Estás de acuerdo?",
+  "buttons": [
+    {
+      "type": "reply",
+      "reply": {
+        "id": "si",
+        "title": "Sí"
+      }
+    },
+    {
+      "type": "reply",
+      "reply": {
+        "id": "no",
+        "title": "No"
+      }
+    }
+  ]
+}
+
+### 3. ENVIAR MENSAJE DE TEXTO NORMAL (para comparar)
+POST http://localhost:8081/enviar
+Content-Type: application/json
+X-API-Key: LO_QUE_QUIERAS
+
+{
+  "numero": "5493534193971",
+  "mensaje": "Hola, este es un mensaje de texto normal"
+}
