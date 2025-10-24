@@ -26,6 +26,7 @@ const config = {
     token: process.env.WHATSAPP_TOKEN,
     phoneNumberId: process.env.PHONE_NUMBER_ID,
     verifyToken: process.env.VERIFY_TOKEN || 'default_token',
+    appSecret: process.env.WHATSAPP_APP_SECRET, // Para verificar firma de webhooks
     timeout: parseInt(process.env.WHATSAPP_TIMEOUT_MS, 10) || 5000,
   },
 

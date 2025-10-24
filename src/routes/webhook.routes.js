@@ -8,6 +8,7 @@ const { asyncHandler } = require('../middlewares/errorHandler');
 const { validateQuery } = require('../middlewares/validator');
 const { webhookVerificationSchema } = require('../validators/schemas');
 const { webhookRateLimitMiddleware } = require('../middlewares/rateLimiter');
+const { verifyWebhookSignature } = require('../middlewares/webhookSignature');
 
 /**
  * Rutas de Webhook de WhatsApp
@@ -42,6 +43,7 @@ router.get(
  */
 router.post(
   '/',
+  verifyWebhookSignature, // Verificar firma X-Hub-Signature-256 de WhatsApp
   webhookRateLimitMiddleware,
   asyncHandler(async (req, res) => {
     // LOG 1: Webhook recibido

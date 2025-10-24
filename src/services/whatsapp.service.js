@@ -3,6 +3,7 @@ const config = require('../config');
 const logger = require('../utils/logger');
 const { retryOnNetworkError } = require('../utils/retry');
 const { mensajesEnviados, erroresWhatsApp } = require('../utils/metrics');
+const { sanitizeToken, sanitizeHeaders, sanitizeError } = require('../utils/sanitize');
 
 /**
  * Servicio de WhatsApp Cloud API con retry logic
@@ -30,7 +31,7 @@ async function enviarMensaje(numero, texto) {
     logger.info('🔍 [WhatsApp] Preparando envío a Meta:');
     logger.info(`   • URL: ${url}`);
     logger.info(`   • Phone Number ID: ${config.whatsapp.phoneNumberId}`);
-    logger.info(`   • Token (primeros 20 chars): ${config.whatsapp.token ? config.whatsapp.token.substring(0, 20) : 'NO_CONFIGURADO'}...`);
+    logger.info(`   • Token: ${config.whatsapp.token ? sanitizeToken(config.whatsapp.token) : 'NO_CONFIGURADO'}`);
     logger.info(`   • Número destino: ${numero}`);
     logger.info(`   • Mensaje: ${texto ? texto.substring(0, Math.min(50, texto.length)) : 'vacio'}...`);
     logger.info(`   • Body completo:\n${JSON.stringify({
@@ -75,13 +76,14 @@ async function enviarMensaje(numero, texto) {
       status: error.response?.status,
     });
 
-    // LOG DETALLADO DEL ERROR
-    logger.error('🔍 [WhatsApp] Detalles completos del error:');
-    logger.error(`   • Status: ${error.response?.status}`);
-    logger.error(`   • Status Text: ${error.response?.statusText}`);
-    logger.error(`   • Respuesta de WhatsApp:\n${JSON.stringify(error.response?.data, null, 2)}`);
-    logger.error(`   • Headers enviados:\n${JSON.stringify(error.config?.headers, null, 2)}`);
-    logger.error(`   • URL llamada: ${error.config?.url}`);
+    // LOG DETALLADO DEL ERROR (sanitizado)
+    const sanitizedError = sanitizeError(error);
+    logger.error('🔍 [WhatsApp] Detalles del error:');
+    logger.error(`   • Status: ${sanitizedError.status}`);
+    logger.error(`   • Status Text: ${sanitizedError.statusText}`);
+    logger.error(`   • Respuesta de WhatsApp:\n${JSON.stringify(sanitizedError.responseData, null, 2)}`);
+    logger.error(`   • Headers enviados:\n${JSON.stringify(sanitizedError.config?.headers, null, 2)}`);
+    logger.error(`   • URL llamada: ${sanitizedError.config?.url}`);
 
     erroresWhatsApp.labels(error.response?.status || 'network').inc();
     mensajesEnviados.labels('error').inc();
@@ -185,10 +187,11 @@ async function enviarBotones(numero, bodyText, buttons, headerText = null, foote
       status: error.response?.status,
     });
 
-    logger.error('🔍 [WhatsApp] Detalles completos del error:');
-    logger.error(`   • Status: ${error.response?.status}`);
-    logger.error(`   • Status Text: ${error.response?.statusText}`);
-    logger.error(`   • Respuesta de WhatsApp:\n${JSON.stringify(error.response?.data, null, 2)}`);
+    const sanitizedError = sanitizeError(error);
+    logger.error('🔍 [WhatsApp] Detalles del error:');
+    logger.error(`   • Status: ${sanitizedError.status}`);
+    logger.error(`   • Status Text: ${sanitizedError.statusText}`);
+    logger.error(`   • Respuesta de WhatsApp:\n${JSON.stringify(sanitizedError.responseData, null, 2)}`);
 
     erroresWhatsApp.labels(error.response?.status || 'network').inc();
     mensajesEnviados.labels('error').inc();
@@ -296,10 +299,11 @@ async function enviarLista(numero, buttonText, bodyText, sections, headerText = 
     });
 
     // LOG DETALLADO DEL ERROR
-    logger.error('🔍 [WhatsApp] Detalles completos del error:');
-    logger.error(`   • Status: ${error.response?.status}`);
-    logger.error(`   • Status Text: ${error.response?.statusText}`);
-    logger.error(`   • Respuesta de WhatsApp:\n${JSON.stringify(error.response?.data, null, 2)}`);
+    const sanitizedError = sanitizeError(error);
+    logger.error('🔍 [WhatsApp] Detalles del error:');
+    logger.error(`   • Status: ${sanitizedError.status}`);
+    logger.error(`   • Status Text: ${sanitizedError.statusText}`);
+    logger.error(`   • Respuesta de WhatsApp:\n${JSON.stringify(sanitizedError.responseData, null, 2)}`);
 
     erroresWhatsApp.labels(error.response?.status || 'network').inc();
     mensajesEnviados.labels('error').inc();
