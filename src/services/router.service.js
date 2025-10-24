@@ -2,6 +2,7 @@ const axios = require('axios');
 const config = require('../config');
 const logger = require('../utils/logger');
 const redisService = require('./redis.service');
+const whatsappService = require('./whatsapp.service');
 const { createBreaker } = require('../utils/circuitBreaker');
 const { mensajesRecibidos, transferencias, finalizaciones, erroresApps } = require('../utils/metrics');
 
@@ -172,8 +173,23 @@ async function enrutarMensaje(numero, body) {
     logger.info(`✓ [enrutarMensaje] App encontrada: ${app.nombre} (${appKey})`);
     logger.info(`🎯 [enrutarMensaje] Enviando a: ${app.url}`);
 
+    // Transformar body si es asesor
+    let payload = body;
+    if (appKey === 'asesor') {
+      const mensaje = whatsappService.extraerMensaje(body);
+      if (mensaje) {
+        payload = {
+          channel_id: config.asesor?.channelId || 1,
+          customer_phone: mensaje.from,
+          customer_name: mensaje.profile_name || 'Cliente',
+          initial_message: mensaje.text,
+        };
+        logger.info(`🔄 [enrutarMensaje] Transformado para asesor:`, payload);
+      }
+    }
+
     // Enviar a la app
-    const resultado = await enviarAApp(appKey, body);
+    const resultado = await enviarAApp(appKey, payload);
 
     // Incrementar estadísticas
     await redisService.incrementStats('mensajes_total');
