@@ -4,6 +4,7 @@ const logger = require('../utils/logger');
 const { retryOnNetworkError } = require('../utils/retry');
 const { mensajesEnviados, erroresWhatsApp } = require('../utils/metrics');
 const { sanitizeToken, sanitizeHeaders, sanitizeError } = require('../utils/sanitize');
+const { logBox, logHttpRequest, logHttpResponse } = require('../utils/logHelper');
 
 /**
  * Servicio de WhatsApp Cloud API con retry logic
@@ -19,44 +20,40 @@ const WHATSAPP_API_URL = 'https://graph.facebook.com/v18.0';
  */
 async function enviarMensaje(numero, texto) {
   if (!config.whatsapp.token || !config.whatsapp.phoneNumberId) {
-    logger.error('❌ WhatsApp no configurado correctamente');
+    logger.error(logBox('WhatsApp no configurado', {
+      'Token': config.whatsapp.token ? 'Presente' : 'Faltante',
+      'Phone Number ID': config.whatsapp.phoneNumberId || 'Faltante',
+    }, 'error'));
     erroresWhatsApp.labels('config').inc();
     throw new Error('WhatsApp no configurado');
   }
 
+  const startTime = Date.now();
+
   try {
     const url = `${WHATSAPP_API_URL}/${config.whatsapp.phoneNumberId}/messages`;
 
-    // LOG DETALLADO: Ver exactamente qué se envía a WhatsApp
-    logger.info('🔍 [WhatsApp] Preparando envío a Meta:');
-    logger.info(`   • URL: ${url}`);
-    logger.info(`   • Phone Number ID: ${config.whatsapp.phoneNumberId}`);
-    logger.info(`   • Token: ${config.whatsapp.token ? sanitizeToken(config.whatsapp.token) : 'NO_CONFIGURADO'}`);
-    logger.info(`   • Número destino: ${numero}`);
-    logger.info(`   • Mensaje: ${texto ? texto.substring(0, Math.min(50, texto.length)) : 'vacio'}...`);
-    logger.info(`   • Body completo:\n${JSON.stringify({
+    const payload = {
       messaging_product: 'whatsapp',
       to: numero,
-      text: { body: texto }
-    }, null, 2)}`);
+      text: { body: texto },
+    };
+
+    logger.info(logBox('Enviando mensaje WhatsApp', {
+      'Número': numero,
+      'Mensaje': texto?.substring(0, 100) + (texto?.length > 100 ? '...' : ''),
+      'API': 'WhatsApp Cloud API',
+    }, 'info'));
 
     const response = await retryOnNetworkError(
       async () => {
-        return await axios.post(
-          url,
-          {
-            messaging_product: 'whatsapp',
-            to: numero,
-            text: { body: texto },
+        return await axios.post(url, payload, {
+          headers: {
+            Authorization: `Bearer ${config.whatsapp.token}`,
+            'Content-Type': 'application/json',
           },
-          {
-            headers: {
-              Authorization: `Bearer ${config.whatsapp.token}`,
-              'Content-Type': 'application/json',
-            },
-            timeout: config.whatsapp.timeout,
-          }
-        );
+          timeout: config.whatsapp.timeout,
+        });
       },
       {
         maxRetries: 3,
@@ -65,25 +62,29 @@ async function enviarMensaje(numero, texto) {
       }
     );
 
-    logger.info(`✅ Mensaje enviado a ${numero}`);
+    const duration = Date.now() - startTime;
+
+    logger.info(logBox('Mensaje WhatsApp Enviado', {
+      'Número': numero,
+      'Message ID': response.data?.messages?.[0]?.id || 'N/A',
+      'Duración': `${duration}ms`,
+      'Status': 'Enviado',
+    }, 'success'));
+
     mensajesEnviados.labels('success').inc();
 
     return response.data;
   } catch (error) {
-    logger.error(`❌ Error enviando mensaje a ${numero}:`, {
-      error: error.message,
-      response: error.response?.data,
-      status: error.response?.status,
-    });
-
-    // LOG DETALLADO DEL ERROR (sanitizado)
+    const duration = Date.now() - startTime;
     const sanitizedError = sanitizeError(error);
-    logger.error('🔍 [WhatsApp] Detalles del error:');
-    logger.error(`   • Status: ${sanitizedError.status}`);
-    logger.error(`   • Status Text: ${sanitizedError.statusText}`);
-    logger.error(`   • Respuesta de WhatsApp:\n${JSON.stringify(sanitizedError.responseData, null, 2)}`);
-    logger.error(`   • Headers enviados:\n${JSON.stringify(sanitizedError.config?.headers, null, 2)}`);
-    logger.error(`   • URL llamada: ${sanitizedError.config?.url}`);
+
+    logger.error(logBox('Error enviando mensaje WhatsApp', {
+      'Número': numero,
+      'Status': sanitizedError.status || 'N/A',
+      'Error': sanitizedError.statusText || error.message,
+      'Duración': `${duration}ms`,
+      'Respuesta': JSON.stringify(sanitizedError.responseData).substring(0, 200),
+    }, 'error'));
 
     erroresWhatsApp.labels(error.response?.status || 'network').inc();
     mensajesEnviados.labels('error').inc();

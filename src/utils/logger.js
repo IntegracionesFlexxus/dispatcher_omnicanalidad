@@ -17,9 +17,18 @@ if (!fs.existsSync(logDir)) {
 
 // Formato personalizado para desarrollo
 const devFormat = winston.format.combine(
-  winston.format.colorize(),
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
   winston.format.printf(({ timestamp, level, message, ...meta }) => {
+    // Si el mensaje contiene saltos de línea (cajas), no agregar timestamp a cada línea
+    if (message.includes('\n')) {
+      // Para mensajes multilínea (cajas), solo agregar timestamp al inicio
+      const lines = message.split('\n');
+      const firstLine = `${timestamp} [${level}]: ${lines[0]}`;
+      const restLines = lines.slice(1).map(line => `${' '.repeat(timestamp.length + level.length + 6)}${line}`);
+      return [firstLine, ...restLines].join('\n');
+    }
+
+    // Para mensajes normales
     let msg = `${timestamp} [${level}]: ${message}`;
     if (Object.keys(meta).length > 0) {
       msg += ` ${JSON.stringify(meta)}`;

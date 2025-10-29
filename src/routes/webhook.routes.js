@@ -9,6 +9,7 @@ const { validateQuery } = require('../middlewares/validator');
 const { webhookVerificationSchema } = require('../validators/schemas');
 const { webhookRateLimitMiddleware } = require('../middlewares/rateLimiter');
 const { verifyWebhookSignature } = require('../middlewares/webhookSignature');
+const { logBox, logWhatsAppMessage, logWebhookReceived } = require('../utils/logHelper');
 
 /**
  * Rutas de Webhook de WhatsApp
@@ -46,53 +47,40 @@ router.post(
   verifyWebhookSignature, // Verificar firma X-Hub-Signature-256 de WhatsApp
   webhookRateLimitMiddleware,
   asyncHandler(async (req, res) => {
-    // LOG 1: Webhook recibido
-    logger.info('🔔 ========== WEBHOOK RECIBIDO ==========');
-    logger.info('📥 Body completo:', { body: JSON.stringify(req.body, null, 2) });
+    const body = req.body;
+
+    logger.info(logWebhookReceived(body));
 
     // Responder inmediatamente a WhatsApp (ACK)
     res.sendStatus(200);
 
     try {
-      const body = req.body;
-
-      // LOG 2: Validación
-      logger.info('🔍 Validando webhook...');
+      // Validación
       const esValido = whatsappService.validarWebhook(body);
-      logger.info(`✓ Validación: ${esValido ? 'VÁLIDO' : 'INVÁLIDO'}`);
 
       if (!esValido) {
-        logger.warn('⚠️  Webhook inválido recibido', {
-          body: JSON.stringify(body),
-        });
+        logger.warn(logBox('Webhook Inválido', {
+          'Razón': 'Estructura incorrecta',
+          'Body preview': JSON.stringify(body).substring(0, 200),
+        }, 'warning'));
         return;
       }
 
-      // LOG 3: Intentar extraer mensaje
-      logger.info('📤 Extrayendo mensaje...');
+      // Intentar extraer mensaje
       const mensaje = whatsappService.extraerMensaje(body);
 
       if (mensaje) {
-        // LOG 4: Mensaje extraído exitosamente
-        logger.info('✅ MENSAJE EXTRAÍDO:');
-        logger.info(`   • ID: ${mensaje.id}`);
-        logger.info(`   • De: ${mensaje.from}`);
-        logger.info(`   • Nombre: ${mensaje.profile_name}`);
-        logger.info(`   • Tipo: ${mensaje.type}`);
-        logger.info(`   • Texto: "${mensaje.text}"`);
-        logger.info(`   • Timestamp: ${mensaje.timestamp}`);
+        logger.info(logWhatsAppMessage(mensaje));
 
-        // LOG 5: Enrutando
-        logger.info('🔀 Enrutando mensaje...');
+        // Enrutar mensaje
         const resultado = await routerService.enrutarMensaje(mensaje.from, body);
 
-        // LOG 6: Resultado del enrutamiento
-        logger.info('✅ ENRUTAMIENTO COMPLETADO:');
-        logger.info(`   • App Key: ${resultado.appKey}`);
-        logger.info(`   • App Nombre: ${resultado.appNombre}`);
-        logger.info(`   • Success: ${resultado.resultado?.success}`);
-        logger.info(`   • Error: ${resultado.resultado?.error || 'ninguno'}`);
-        logger.info('🔔 ========== FIN WEBHOOK ==========\n');
+        logger.info(logBox('Webhook Procesado - Mensaje', {
+          'Número': mensaje.from,
+          'App destino': resultado.appNombre,
+          'Éxito': resultado.resultado?.success ? 'Sí' : 'No',
+          'Status': resultado.resultado?.status || 'N/A',
+        }, 'success'));
 
         // Opcional: marcar como leído
         if (config.whatsapp.markAsRead) {
@@ -102,30 +90,30 @@ router.post(
         return;
       }
 
-      // LOG 7: Intentar extraer status update
-      logger.info('📊 No es mensaje, intentando extraer status...');
+      // Intentar extraer status update
       const status = whatsappService.extraerStatus(body);
 
       if (status) {
-        logger.info(`📊 Status update recibido:`, {
-          id: status.id,
-          status: status.status,
-          recipient: status.recipient_id,
-        });
+        logger.info(logBox('Status Update Recibido', {
+          'ID': status.id,
+          'Estado': status.status,
+          'Destinatario': status.recipient_id,
+        }, 'info'));
         return;
       }
 
-      // LOG 8: Ni mensaje ni status
-      logger.warn('📭 Webhook sin mensaje ni status');
-      logger.warn('Body recibido:', JSON.stringify(body, null, 2));
+      // Ni mensaje ni status
+      logger.warn(logBox('Webhook sin contenido procesable', {
+        'Tipo': 'Desconocido',
+        'Body preview': JSON.stringify(body).substring(0, 200),
+      }, 'warning'));
 
     } catch (error) {
-      // LOG 9: Error
-      logger.error('❌ ========== ERROR EN WEBHOOK ==========');
-      logger.error('Error:', error.message);
-      logger.error('Stack:', error.stack);
-      logger.error('Body:', JSON.stringify(req.body, null, 2));
-      logger.error('❌ ========================================\n');
+      logger.error(logBox('Error procesando Webhook', {
+        'Error': error.message,
+        'Stack': error.stack?.substring(0, 500),
+        'Body preview': JSON.stringify(req.body).substring(0, 200),
+      }, 'error'));
     }
   })
 );
