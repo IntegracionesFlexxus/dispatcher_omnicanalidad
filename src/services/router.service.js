@@ -341,6 +341,50 @@ async function transferir(numero, appDestino, contexto = {}) {
 
   const resultado = await enviarAApp(appDestino, notificacion);
 
+  // Si transferimos al asesor, desactivar el bot
+  if (appDestino === 'asesor') {
+    try {
+      const botApp = config.apps['bot'];
+      if (botApp) {
+        const baseUrl = botApp.url.replace(/\/webhook\/?$/, '');
+        const desactivarUrl = `${baseUrl}/api/desactivar-modo-asesor`;
+
+        logger.info(logBox('Desactivando Bot para Modo Asesor', {
+          'Número': numero,
+          'URL': desactivarUrl,
+        }, 'info'));
+
+        const response = await axios.post(
+          desactivarUrl,
+          { celular: numero },
+          {
+            timeout: 5000,
+            headers: { 'Content-Type': 'application/json' },
+            validateStatus: (status) => status < 500,
+          }
+        );
+
+        if (response.status >= 200 && response.status < 300) {
+          logger.info(logBox('Bot Desactivado', {
+            'Número': numero,
+            'Status': response.status,
+          }, 'success'));
+        } else {
+          logger.warn(logBox('Bot respondió con error', {
+            'Número': numero,
+            'Status': response.status,
+          }, 'warning'));
+        }
+      }
+    } catch (error) {
+      logger.error(logBox('Error desactivando bot', {
+        'Número': numero,
+        'Error': error.message,
+        'Nota': 'La transferencia se completó correctamente',
+      }, 'error'));
+    }
+  }
+
   // Incrementar stats
   await redisService.incrementStats('transferencias');
   await redisService.incrementStats(`transferencias_${appAnterior}_to_${appDestino}`);
