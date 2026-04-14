@@ -74,7 +74,7 @@ const logger = winston.createLogger({
   exitOnError: false,
 });
 
-// Siempre mostrar en consola (requerido para Docker logs)
+// Siempre mostrar en consola (necesario para docker logs)
 logger.add(
   new winston.transports.Console({
     format: config.isProduction() ? prodFormat : devFormat,

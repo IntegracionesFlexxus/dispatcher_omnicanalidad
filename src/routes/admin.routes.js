@@ -31,7 +31,7 @@ router.get(
     const whatsappOk = whatsappService.isConfigured();
 
     const health = {
-      status: redisOk && whatsappOk ? 'healthy' : 'unhealthy',
+      status: redisOk ? 'healthy' : 'unhealthy',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       checks: {
@@ -228,6 +228,90 @@ router.post(
 );
 
 /**
+ * POST /bot/desactivar/:numero - Desactivar bot para un número
+ */
+router.post(
+  '/bot/desactivar/:numero',
+  authenticate,
+  validateParams(numeroParamSchema),
+  asyncHandler(async (req, res) => {
+    const { numero } = req.params;
+    const { motivo, conversation_id } = req.body || {};
+
+    const resultado = await routerService.desactivarBot(numero, motivo, conversation_id);
+
+    if (resultado.ya_desactivado) {
+      return res.status(409).json({
+        ok: false,
+        mensaje: `El bot ya se encuentra desactivado para ${numero}`,
+        desactivado_en: resultado.desactivado_en,
+      });
+    }
+
+    res.json({
+      ok: true,
+      mensaje: `Bot desactivado para ${numero}`,
+      ...resultado,
+    });
+  })
+);
+
+/**
+ * POST /bot/activar/:numero - Activar bot para un número
+ */
+router.post(
+  '/bot/activar/:numero',
+  authenticate,
+  validateParams(numeroParamSchema),
+  asyncHandler(async (req, res) => {
+    const { numero } = req.params;
+
+    const resultado = await routerService.activarBot(numero);
+
+    res.json({
+      ok: true,
+      mensaje: `Bot activado para ${numero}`,
+      ...resultado,
+    });
+  })
+);
+
+/**
+ * GET /bot/estado/:numero - Ver estado del bot para un número
+ */
+router.get(
+  '/bot/estado/:numero',
+  authenticate,
+  validateParams(numeroParamSchema),
+  asyncHandler(async (req, res) => {
+    const { numero } = req.params;
+    const estado = await routerService.getEstadoBot(numero);
+
+    res.json({
+      ok: true,
+      ...estado,
+    });
+  })
+);
+
+/**
+ * GET /bot/desactivados - Listar todos los números con bot desactivado
+ */
+router.get(
+  '/bot/desactivados',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const desactivados = await routerService.getBotDesactivados();
+
+    res.json({
+      ok: true,
+      total: desactivados.length,
+      desactivados,
+    });
+  })
+);
+
+/**
  * GET /estado - Ver estado del sistema
  */
 router.get(
@@ -237,9 +321,11 @@ router.get(
     const routings = await redisService.getAllRoutings();
     const stats = await redisService.getStats();
     const circuitBreakers = routerService.getCircuitBreakerStats();
+    const botDesactivados = await routerService.getBotDesactivados();
 
     res.json({
       total_conversaciones: routings.length,
+      bot_desactivados: botDesactivados,
       conversaciones: routings,
       estadisticas: stats,
       circuit_breakers: circuitBreakers,
@@ -286,6 +372,10 @@ router.get('/', (req, res) => {
       enviarTemplate: 'POST /enviar-template',
       transferir: 'POST /transferir',
       finalizar: 'POST /finalizar/:numero',
+      botDesactivar: 'POST /bot/desactivar/:numero',
+      botActivar: 'POST /bot/activar/:numero',
+      botEstado: 'GET /bot/estado/:numero',
+      botDesactivados: 'GET /bot/desactivados',
       estado: 'GET /estado',
       aplicaciones: 'GET /aplicaciones',
       metrics: 'GET /metrics',

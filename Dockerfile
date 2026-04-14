@@ -42,17 +42,16 @@ RUN mkdir -p logs && \
 # Cambiar a usuario no-root
 USER nodejs
 
-# Exponer puerto
-EXPOSE 8080
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:8080/health', (r) => { process.exit(r.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));"
-
 # Variables de entorno por defecto
 ENV NODE_ENV=production \
     PORT=8080 \
     HOST=0.0.0.0
+
+# Exponer puerto
+EXPOSE ${PORT}
+
+# Desactivar healthcheck (Portainer/Swarm lo maneja externamente si se necesita)
+HEALTHCHECK NONE
 
 # Comando de inicio
 CMD ["node", "src/index.js"]

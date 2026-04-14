@@ -1,15 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "Bash(mkdir:*)",
-      "Bash(npm audit:*)",
-      "Bash(docker run:*)",
-      "Bash(node:*)",
-      "Bash(del \"D:\\GitHub\\dispatcher_omnicanalidad\\test-url.js\")",
-      "Bash(npm start)",
-      "Bash(netstat:*)",
-      "Bash(findstr:*)",
-      "Bash(taskkill:*)"
+      "Bash(mkdir:*)"
     ],
     "deny": [],
     "ask": []
