@@ -14,7 +14,31 @@ const {
   finalizarSchema,
   numeroParamSchema,
   enviarTemplateSchema,
+  enviarMediaSchema,
 } = require('../validators/schemas');
+const multer = require('multer');
+
+// Configurar multer en memoria (no escribe a disco)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB max
+});
+
+// Mime types permitidos y sus tipos de WhatsApp
+const ALLOWED_MEDIA_TYPES = {
+  'image/jpeg': { tipo: 'image', maxSize: 5 * 1024 * 1024 },
+  'image/png': { tipo: 'image', maxSize: 5 * 1024 * 1024 },
+  'image/webp': { tipo: 'image', maxSize: 5 * 1024 * 1024 },
+  'video/mp4': { tipo: 'video', maxSize: 16 * 1024 * 1024 },
+  'video/3gpp': { tipo: 'video', maxSize: 16 * 1024 * 1024 },
+  'application/pdf': { tipo: 'document', maxSize: 25 * 1024 * 1024 },
+  'application/msword': { tipo: 'document', maxSize: 25 * 1024 * 1024 },
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': { tipo: 'document', maxSize: 25 * 1024 * 1024 },
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': { tipo: 'document', maxSize: 25 * 1024 * 1024 },
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': { tipo: 'document', maxSize: 25 * 1024 * 1024 },
+  'application/vnd.ms-excel': { tipo: 'document', maxSize: 25 * 1024 * 1024 },
+  'text/csv': { tipo: 'document', maxSize: 25 * 1024 * 1024 },
+};
 const { register: metricsRegister } = require('../utils/metrics');
 
 /**
@@ -175,6 +199,86 @@ router.post(
     res.json({
       ok: true,
       mensaje: 'Template enviado correctamente',
+    });
+  })
+);
+
+/**
+ * POST /enviar-media - Enviar archivo (imagen, documento, video) por WhatsApp
+ * Content-Type: multipart/form-data
+ * Campos: numero (string), archivo (file), caption (string, opcional)
+ */
+router.post(
+  '/enviar-media',
+  authenticate,
+  upload.single('archivo'),
+  asyncHandler(async (req, res) => {
+    // Validar que se envió un archivo
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: 'El campo "archivo" es requerido',
+      });
+    }
+
+    // Validar numero y caption con Joi
+    const { error, value } = enviarMediaSchema.validate(req.body, {
+      abortEarly: false,
+      stripUnknown: true,
+    });
+
+    if (error) {
+      const errorMessage = error.details.map((d) => d.message).join(', ');
+      return res.status(400).json({
+        success: false,
+        error: errorMessage,
+      });
+    }
+
+    const { numero, caption } = value;
+    const { mimetype, buffer, originalname, size } = req.file;
+
+    // Validar mime type permitido
+    const mediaConfig = ALLOWED_MEDIA_TYPES[mimetype];
+    if (!mediaConfig) {
+      return res.status(400).json({
+        success: false,
+        error: `Tipo de archivo no permitido: ${mimetype}. Tipos permitidos: ${Object.keys(ALLOWED_MEDIA_TYPES).join(', ')}`,
+      });
+    }
+
+    // Validar tamaño según tipo
+    if (size > mediaConfig.maxSize) {
+      const maxMB = (mediaConfig.maxSize / (1024 * 1024)).toFixed(0);
+      return res.status(400).json({
+        success: false,
+        error: `Archivo excede el tamaño máximo para ${mediaConfig.tipo}: ${maxMB}MB`,
+      });
+    }
+
+    const tipoMedia = mediaConfig.tipo;
+
+    logger.info(`📎 Enviando ${tipoMedia} a ${numero}: ${originalname} (${(size / 1024).toFixed(1)} KB)`);
+
+    // 1. Subir archivo a Meta Media API
+    const mediaId = await whatsappService.subirMedia(buffer, mimetype, originalname);
+
+    // 2. Enviar mensaje con el media_id
+    const response = await whatsappService.enviarMedia(
+      numero,
+      mediaId,
+      tipoMedia,
+      caption || null,
+      originalname
+    );
+
+    const messageId = response?.messages?.[0]?.id || null;
+
+    await redisService.incrementStats('media_enviados');
+
+    res.json({
+      success: true,
+      messageId,
     });
   })
 );
@@ -369,6 +473,7 @@ router.get('/', (req, res) => {
       health: 'GET /health',
       webhook: 'POST /webhook',
       enviar: 'POST /enviar (texto o lista)',
+      enviarMedia: 'POST /enviar-media (multipart/form-data)',
       enviarTemplate: 'POST /enviar-template',
       transferir: 'POST /transferir',
       finalizar: 'POST /finalizar/:numero',

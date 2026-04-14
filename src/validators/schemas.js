@@ -179,6 +179,22 @@ const enviarTemplateSchema = Joi.object({
   components: Joi.array().optional(),
 });
 
+/**
+ * Schema para enviar media (valida campos del form-data, no el archivo)
+ */
+const enviarMediaSchema = Joi.object({
+  numero: Joi.string()
+    .pattern(phonePattern)
+    .required()
+    .messages({
+      'string.pattern.base': 'Número debe tener entre 10 y 15 dígitos (formato internacional)',
+      'any.required': 'Número es requerido',
+    }),
+  caption: Joi.string().max(1024).optional().allow('').messages({
+    'string.max': 'Caption no puede exceder 1024 caracteres',
+  }),
+});
+
 module.exports = {
   enviarMensajeSchema,
   transferirSchema,
@@ -186,4 +202,5 @@ module.exports = {
   numeroParamSchema,
   webhookVerificationSchema,
   enviarTemplateSchema,
+  enviarMediaSchema,
 };

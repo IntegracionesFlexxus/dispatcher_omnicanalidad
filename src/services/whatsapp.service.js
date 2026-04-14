@@ -376,6 +376,173 @@ async function enviarTemplate(numero, templateName, languageCode = 'es', compone
 }
 
 /**
+ * Subir archivo a Meta Media API
+ * @param {Buffer} buffer - Contenido del archivo
+ * @param {string} mimeType - MIME type del archivo
+ * @param {string} filename - Nombre original del archivo
+ * @returns {Promise<string>} media_id de Meta
+ */
+async function subirMedia(buffer, mimeType, filename) {
+  if (!config.whatsapp.token || !config.whatsapp.phoneNumberId) {
+    erroresWhatsApp.labels('config').inc();
+    throw new Error('WhatsApp no configurado');
+  }
+
+  const startTime = Date.now();
+
+  try {
+    const url = `${WHATSAPP_API_URL}/${config.whatsapp.phoneNumberId}/media`;
+
+    const FormData = require('form-data');
+    const form = new FormData();
+    form.append('messaging_product', 'whatsapp');
+    form.append('type', mimeType);
+    form.append('file', buffer, {
+      filename: filename,
+      contentType: mimeType,
+    });
+
+    logger.info(logBox('Subiendo media a Meta', {
+      'Filename': filename,
+      'MIME Type': mimeType,
+      'Tamaño': `${(buffer.length / 1024).toFixed(1)} KB`,
+    }, 'info'));
+
+    const response = await retryOnNetworkError(
+      async () => {
+        return await axios.post(url, form, {
+          headers: {
+            Authorization: `Bearer ${config.whatsapp.token}`,
+            ...form.getHeaders(),
+          },
+          timeout: config.whatsapp.timeout,
+          maxContentLength: 26 * 1024 * 1024,
+          maxBodyLength: 26 * 1024 * 1024,
+        });
+      },
+      {
+        maxRetries: 2,
+        delay: 1000,
+        operation: `subirMedia ${filename}`,
+      }
+    );
+
+    const mediaId = response.data?.id;
+    const duration = Date.now() - startTime;
+
+    logger.info(logBox('Media subida a Meta', {
+      'Media ID': mediaId,
+      'Duración': `${duration}ms`,
+    }, 'success'));
+
+    return mediaId;
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    const sanitizedError = sanitizeError(error);
+
+    logger.error(logBox('Error subiendo media a Meta', {
+      'Filename': filename,
+      'Status': sanitizedError.status || 'N/A',
+      'Error': sanitizedError.statusText || error.message,
+      'Duración': `${duration}ms`,
+    }, 'error'));
+
+    erroresWhatsApp.labels(error.response?.status || 'network').inc();
+    throw error;
+  }
+}
+
+/**
+ * Enviar mensaje con media a WhatsApp
+ * @param {string} numero - Número destino
+ * @param {string} mediaId - ID del media en Meta
+ * @param {string} tipoMedia - Tipo: 'image', 'video', 'document'
+ * @param {string|null} caption - Caption opcional
+ * @param {string|null} filename - Nombre del archivo (solo para documents)
+ * @returns {Promise<Object>} Respuesta de la API
+ */
+async function enviarMedia(numero, mediaId, tipoMedia, caption = null, filename = null) {
+  if (!config.whatsapp.token || !config.whatsapp.phoneNumberId) {
+    erroresWhatsApp.labels('config').inc();
+    throw new Error('WhatsApp no configurado');
+  }
+
+  const startTime = Date.now();
+
+  try {
+    const url = `${WHATSAPP_API_URL}/${config.whatsapp.phoneNumberId}/messages`;
+
+    const mediaObject = { id: mediaId };
+    if (caption) {
+      mediaObject.caption = caption;
+    }
+    if (tipoMedia === 'document' && filename) {
+      mediaObject.filename = filename;
+    }
+
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: numero,
+      type: tipoMedia,
+      [tipoMedia]: mediaObject,
+    };
+
+    logger.info(logBox('Enviando media WhatsApp', {
+      'Número': numero,
+      'Tipo': tipoMedia,
+      'Media ID': mediaId,
+      'Caption': caption ? caption.substring(0, 50) + (caption.length > 50 ? '...' : '') : 'Sin caption',
+    }, 'info'));
+
+    const response = await retryOnNetworkError(
+      async () => {
+        return await axios.post(url, payload, {
+          headers: {
+            Authorization: `Bearer ${config.whatsapp.token}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: config.whatsapp.timeout,
+        });
+      },
+      {
+        maxRetries: 3,
+        delay: 500,
+        operation: `enviarMedia ${tipoMedia} a ${numero}`,
+      }
+    );
+
+    const duration = Date.now() - startTime;
+
+    logger.info(logBox('Media WhatsApp Enviada', {
+      'Número': numero,
+      'Tipo': tipoMedia,
+      'Message ID': response.data?.messages?.[0]?.id || 'N/A',
+      'Duración': `${duration}ms`,
+    }, 'success'));
+
+    mensajesEnviados.labels('media').inc();
+
+    return response.data;
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    const sanitizedError = sanitizeError(error);
+
+    logger.error(logBox('Error enviando media WhatsApp', {
+      'Número': numero,
+      'Tipo': tipoMedia,
+      'Status': sanitizedError.status || 'N/A',
+      'Error': sanitizedError.statusText || error.message,
+      'Duración': `${duration}ms`,
+    }, 'error'));
+
+    erroresWhatsApp.labels(error.response?.status || 'network').inc();
+    mensajesEnviados.labels('error').inc();
+
+    throw error;
+  }
+}
+
+/**
  * Marcar mensaje como leído
  * @param {string} messageId - ID del mensaje
  * @returns {Promise<Object>}
@@ -525,6 +692,8 @@ module.exports = {
   enviarBotones,
   enviarLista,
   enviarTemplate,
+  subirMedia,
+  enviarMedia,
   marcarComoLeido,
   validarWebhook,
   extraerMensaje,
