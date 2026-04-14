@@ -401,8 +401,43 @@ async function finalizar(numero) {
 
   await redisService.clearAppAsignada(numero);
   await redisService.clearConversationId(numero);
+  await redisService.setBotEstado(numero, { activo: true, desactivado_en: null, motivo: null });
 
-  logger.info(`🔚 Finalizado: ${numero} (era ${appAnterior})`);
+  // Si venía del asesor, desactivar modo asesor en el bot
+  if (appAnterior === 'asesor') {
+    try {
+      const botApp = config.apps['bot'];
+      if (botApp) {
+        const baseUrl = botApp.url.replace(/\/webhook\/?$/, '');
+        const desactivarUrl = `${baseUrl}/api/desactivar-modo-asesor`;
+
+        logger.info(`🔄 Desactivando modo asesor en bot para ${numero} → ${desactivarUrl}`);
+
+        const response = await axios.post(
+          desactivarUrl,
+          { celular: numero },
+          {
+            timeout: 5000,
+            headers: { 'Content-Type': 'application/json' },
+            validateStatus: (status) => status < 500,
+          }
+        );
+
+        if (response.status >= 200 && response.status < 300) {
+          logger.info(`✅ Modo asesor desactivado en bot para ${numero} (${response.status})`);
+        } else {
+          logger.warn(`⚠️  Bot respondió ${response.status} al desactivar modo asesor para ${numero}`);
+        }
+      } else {
+        logger.warn(`⚠️  App BOT no configurada, no se puede desactivar modo asesor`);
+      }
+    } catch (error) {
+      // No fallar la finalización si falla la desactivación del modo asesor
+      logger.error(`❌ Error desactivando modo asesor para ${numero}: ${error.message} (finalización en Redis fue exitosa)`);
+    }
+  }
+
+  logger.info(`🔚 Finalizado: ${numero} (era ${appAnterior}) - Bot reactivado`);
 
   // Incrementar stats
   await redisService.incrementStats('finalizaciones');
