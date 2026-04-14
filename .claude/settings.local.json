@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "Bash(npm audit:*)",
+      "Bash(node -e \"require\\('./src/routes/admin.routes'\\); require\\('./src/services/router.service'\\); require\\('./src/services/redis.service'\\); console.log\\('OK - todo carga sin errores'\\)\")",
+      "Bash(npm install:*)",
+      "Bash(ls:*)"
     ],
     "deny": [],
     "ask": []

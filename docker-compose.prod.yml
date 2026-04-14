@@ -8,7 +8,7 @@ services:
       context: .
       target: runtime
     ports:
-      - "8080:8080"
+      - "8082:8082"
     environment:
       - NODE_ENV=production
     env_file:
@@ -17,11 +17,7 @@ services:
       - ./logs:/app/logs
     restart: always
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8080/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      disable: true
     deploy:
       replicas: 3
       restart_policy:

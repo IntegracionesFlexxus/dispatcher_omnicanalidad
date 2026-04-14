@@ -181,6 +181,75 @@ async function getAllRoutings() {
 }
 
 /**
+ * Obtener estado del bot para un número específico
+ * @param {string} numero - Número de teléfono
+ * @returns {Promise<{activo: boolean, desactivado_en: string|null, motivo: string|null}>}
+ */
+async function getBotEstado(numero) {
+  const data = storage.get(`bot:desactivado:${numero}`);
+  if (!data) {
+    return { activo: true, desactivado_en: null, motivo: null };
+  }
+  return data;
+}
+
+/**
+ * Guardar estado del bot para un número específico
+ * @param {string} numero - Número de teléfono
+ * @param {Object} estado - { activo, desactivado_en, motivo }
+ */
+async function setBotEstado(numero, estado) {
+  if (estado.activo) {
+    storage.delete(`bot:desactivado:${numero}`);
+  } else {
+    storage.set(`bot:desactivado:${numero}`, estado);
+  }
+  logger.info(`🤖 Bot estado para ${numero}: ${estado.activo ? 'ACTIVO' : 'DESACTIVADO'}`);
+}
+
+/**
+ * Obtener todos los números con bot desactivado
+ * @returns {Promise<Array>}
+ */
+async function getAllBotDesactivados() {
+  const desactivados = [];
+  storage.forEach((data, key) => {
+    if (key.startsWith('bot:desactivado:')) {
+      const numero = key.replace('bot:desactivado:', '');
+      desactivados.push({ numero, ...data });
+    }
+  });
+  return desactivados;
+}
+
+/**
+ * Guardar conversation_id del asesor para un número
+ * @param {string} numero - Número de teléfono
+ * @param {number|string} conversationId - ID de conversación del asesor
+ */
+async function setConversationId(numero, conversationId) {
+  storage.set(`conversation:${numero}`, conversationId);
+  logger.info(`💬 Conversation ID guardado: ${numero} → ${conversationId}`);
+}
+
+/**
+ * Obtener conversation_id del asesor para un número
+ * @param {string} numero - Número de teléfono
+ * @returns {Promise<number|string|null>}
+ */
+async function getConversationId(numero) {
+  return storage.get(`conversation:${numero}`) || null;
+}
+
+/**
+ * Limpiar conversation_id de un número
+ * @param {string} numero - Número de teléfono
+ */
+async function clearConversationId(numero) {
+  storage.delete(`conversation:${numero}`);
+}
+
+/**
  * Health check
  * @returns {Promise<boolean>}
  */
@@ -205,6 +274,12 @@ module.exports = {
   incrementStats,
   getStats,
   getAllRoutings,
+  getBotEstado,
+  setBotEstado,
+  getAllBotDesactivados,
   healthCheck,
   getClient,
+  setConversationId,
+  getConversationId,
+  clearConversationId,
 };

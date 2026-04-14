@@ -65,14 +65,12 @@ const logger = winston.createLogger({
   exitOnError: false,
 });
 
-// En desarrollo, también mostrar en consola
-if (!config.isProduction()) {
-  logger.add(
-    new winston.transports.Console({
-      format: devFormat,
-    })
-  );
-}
+// Siempre mostrar en consola (necesario para docker logs)
+logger.add(
+  new winston.transports.Console({
+    format: config.isProduction() ? prodFormat : devFormat,
+  })
+);
 
 // Capturar excepciones no manejadas
 logger.exceptions.handle(

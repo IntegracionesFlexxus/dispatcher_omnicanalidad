@@ -159,6 +159,30 @@ async function enrutarMensaje(numero, body) {
       logger.error(`   Apps disponibles: ${Object.keys(config.apps).join(', ')}`);
       logger.info(`🔄 [enrutarMensaje] Ejecutando FALLBACK al bot...`);
 
+      // Si el bot está desactivado, reenviar al asesor
+      const botEstado = await redisService.getBotEstado(numero);
+      if (!botEstado.activo && config.apps['asesor']) {
+        logger.warn(`⏸️  [enrutarMensaje] Bot DESACTIVADO para ${numero}, reenviando al asesor (fallback)`);
+        const mensaje = require('./whatsapp.service').extraerMensaje(body);
+        const payload = {
+          channel_id: config.asesor?.channelId || 1,
+          customer_phone: numero,
+          customer_name: mensaje?.profile_name || 'Cliente',
+          message: mensaje?.text || '',
+          message_type: mensaje?.type || 'text',
+          raw_webhook: body,
+        };
+        const resultado = await enviarAApp('asesor', payload);
+        return {
+          appKey: 'asesor',
+          appNombre: config.apps['asesor'].nombre,
+          resultado,
+          fallback: true,
+          bot_desactivado: true,
+          redirigido: true,
+        };
+      }
+
       // Fallback al bot
       const fallbackResult = await enviarAApp('bot', body);
       return {
@@ -169,11 +193,76 @@ async function enrutarMensaje(numero, body) {
       };
     }
 
+    // Si el bot está desactivado, reenviar al asesor en vez de descartar
+    if (appKey === 'bot') {
+      const botEstado = await redisService.getBotEstado(numero);
+      if (!botEstado.activo) {
+        logger.warn(`⏸️  [enrutarMensaje] Bot DESACTIVADO para ${numero}, reenviando al asesor`);
+        await redisService.incrementStats('mensajes_bot_desactivado');
+
+        if (config.apps['asesor']) {
+          const mensaje = require('./whatsapp.service').extraerMensaje(body);
+          const conversationId = await redisService.getConversationId(numero);
+          const payload = {
+            channel_id: config.asesor?.channelId || 1,
+            customer_phone: numero,
+            customer_name: mensaje?.profile_name || 'Cliente',
+            message: mensaje?.text || '',
+            message_type: mensaje?.type || 'text',
+            raw_webhook: body,
+          };
+          if (conversationId) {
+            payload.conversation_id = conversationId;
+          }
+          logger.info(`📋 [enrutarMensaje] Reenviando a asesor (conv: ${conversationId || 'nueva'}): ${JSON.stringify(payload, null, 2)}`);
+          const resultado = await enviarAApp('asesor', payload);
+          // Guardar conversation_id si el asesor lo devuelve
+          if (resultado.data?.conversation_id && !conversationId) {
+            await redisService.setConversationId(numero, resultado.data.conversation_id);
+          }
+          return {
+            appKey: 'asesor',
+            appNombre: config.apps['asesor'].nombre,
+            resultado,
+            bot_desactivado: true,
+            redirigido: true,
+          };
+        }
+      }
+    }
+
     logger.info(`✓ [enrutarMensaje] App encontrada: ${app.nombre} (${appKey})`);
     logger.info(`🎯 [enrutarMensaje] Enviando a: ${app.url}`);
 
+    // Transformar payload para asesor (espera channel_id, customer_phone, customer_name)
+    let payload = body;
+    if (appKey === 'asesor') {
+      const mensaje = require('./whatsapp.service').extraerMensaje(body);
+      const conversationId = await redisService.getConversationId(numero);
+      payload = {
+        channel_id: config.asesor?.channelId || 1,
+        customer_phone: numero,
+        customer_name: mensaje?.profile_name || 'Cliente',
+        message: mensaje?.text || '',
+        message_type: mensaje?.type || 'text',
+        raw_webhook: body,
+      };
+      if (conversationId) {
+        payload.conversation_id = conversationId;
+      }
+      logger.info(`📋 [enrutarMensaje] Payload transformado para asesor (conv: ${conversationId || 'nueva'}): ${JSON.stringify(payload, null, 2)}`);
+    }
+
     // Enviar a la app
-    const resultado = await enviarAApp(appKey, body);
+    const resultado = await enviarAApp(appKey, payload);
+
+    // Guardar conversation_id si el asesor lo devuelve
+    if (appKey === 'asesor' && resultado.data?.conversation_id) {
+      const existingConvId = await redisService.getConversationId(numero);
+      if (!existingConvId) {
+        await redisService.setConversationId(numero, resultado.data.conversation_id);
+      }
+    }
 
     // Incrementar estadísticas
     await redisService.incrementStats('mensajes_total');
@@ -198,6 +287,30 @@ async function enrutarMensaje(numero, body) {
     // Intentar fallback al bot
     logger.warn(`🔄 [enrutarMensaje] Intentando FALLBACK al bot por error...`);
     try {
+      // Si el bot está desactivado, reenviar al asesor
+      const botEstado = await redisService.getBotEstado(numero);
+      if (!botEstado.activo && config.apps['asesor']) {
+        logger.warn(`⏸️  [enrutarMensaje] Bot DESACTIVADO para ${numero}, reenviando al asesor (error fallback)`);
+        const mensaje = require('./whatsapp.service').extraerMensaje(body);
+        const payload = {
+          channel_id: config.asesor?.channelId || 1,
+          customer_phone: numero,
+          customer_name: mensaje?.profile_name || 'Cliente',
+          message: mensaje?.text || '',
+          message_type: mensaje?.type || 'text',
+          raw_webhook: body,
+        };
+        const resultado = await enviarAApp('asesor', payload);
+        return {
+          appKey: 'asesor',
+          appNombre: config.apps['asesor'].nombre,
+          resultado,
+          error: error.message,
+          bot_desactivado: true,
+          redirigido: true,
+        };
+      }
+
       const fallbackResult = await enviarAApp('bot', body);
       logger.info(`✓ [enrutarMensaje] Fallback exitoso`);
       return {
@@ -265,10 +378,16 @@ async function transferir(numero, appDestino, contexto = {}) {
   await redisService.incrementStats(`transferencias_${appAnterior}_to_${appDestino}`);
   transferencias.labels(appAnterior, appDestino).inc();
 
+  // Guardar conversation_id si el asesor lo devuelve
+  if (appDestino === 'asesor' && resultado.data?.conversation_id) {
+    await redisService.setConversationId(numero, resultado.data.conversation_id);
+  }
+
   return {
     anterior: appAnterior,
     nueva: appDestino,
     notificacion_enviada: resultado.success,
+    conversation_id: resultado.data?.conversation_id || null,
   };
 }
 
@@ -281,6 +400,7 @@ async function finalizar(numero) {
   const appAnterior = await redisService.getAppAsignada(numero);
 
   await redisService.clearAppAsignada(numero);
+  await redisService.clearConversationId(numero);
 
   logger.info(`🔚 Finalizado: ${numero} (era ${appAnterior})`);
 
@@ -293,6 +413,80 @@ async function finalizar(numero) {
     app_anterior: appAnterior,
     app_actual: 'bot',
   };
+}
+
+/**
+ * Desactivar bot temporalmente para un número
+ * @param {string} numero - Número de teléfono
+ * @param {string} motivo - Motivo de la desactivación
+ * @returns {Promise<Object>}
+ */
+async function desactivarBot(numero, motivo = '', conversationId = null) {
+  const estadoActual = await redisService.getBotEstado(numero);
+
+  if (!estadoActual.activo) {
+    return { ya_desactivado: true, numero, desactivado_en: estadoActual.desactivado_en };
+  }
+
+  const estado = {
+    activo: false,
+    desactivado_en: new Date().toISOString(),
+    motivo: motivo || null,
+  };
+
+  await redisService.setBotEstado(numero, estado);
+
+  // Si el asesor pasa conversation_id, guardarlo para los mensajes siguientes
+  if (conversationId) {
+    await redisService.setConversationId(numero, conversationId);
+    logger.info(`💬 Conversation ID asociado: ${numero} → ${conversationId}`);
+  }
+
+  logger.info(`🔴 Bot DESACTIVADO para ${numero}. Motivo: ${motivo || 'No especificado'}`);
+
+  return { numero, ...estado, conversation_id: conversationId };
+}
+
+/**
+ * Activar bot para un número
+ * @param {string} numero - Número de teléfono
+ * @returns {Promise<Object>}
+ */
+async function activarBot(numero) {
+  const estadoAnterior = await redisService.getBotEstado(numero);
+
+  const estado = {
+    activo: true,
+    desactivado_en: null,
+    motivo: null,
+  };
+
+  await redisService.setBotEstado(numero, estado);
+  logger.info(`🟢 Bot ACTIVADO para ${numero}`);
+
+  return {
+    numero,
+    ...estado,
+    estuvo_desactivado_desde: estadoAnterior.desactivado_en,
+  };
+}
+
+/**
+ * Obtener estado del bot para un número
+ * @param {string} numero - Número de teléfono
+ * @returns {Promise<Object>}
+ */
+async function getEstadoBot(numero) {
+  const estado = await redisService.getBotEstado(numero);
+  return { numero, ...estado };
+}
+
+/**
+ * Obtener todos los números con bot desactivado
+ * @returns {Promise<Array>}
+ */
+async function getBotDesactivados() {
+  return await redisService.getAllBotDesactivados();
 }
 
 /**
@@ -323,5 +517,9 @@ module.exports = {
   enrutarMensaje,
   transferir,
   finalizar,
+  desactivarBot,
+  activarBot,
+  getEstadoBot,
+  getBotDesactivados,
   getCircuitBreakerStats,
 };
