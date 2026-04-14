@@ -332,6 +332,27 @@ router.post(
 );
 
 /**
+ * GET /media/:mediaId - Descargar media de Meta (proxy para CRM)
+ */
+router.get(
+  '/media/:mediaId',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const { mediaId } = req.params;
+
+    if (!mediaId || mediaId.length < 5) {
+      return res.status(400).json({ ok: false, error: 'mediaId inválido' });
+    }
+
+    const { buffer, contentType } = await whatsappService.descargarMedia(mediaId);
+
+    res.set('Content-Type', contentType);
+    res.set('Content-Length', buffer.length);
+    res.send(buffer);
+  })
+);
+
+/**
  * POST /bot/desactivar/:numero - Desactivar bot para un número
  */
 router.post(

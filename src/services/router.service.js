@@ -245,8 +245,11 @@ async function enrutarMensaje(numero, body) {
             channel_id: config.asesor?.channelId || 1,
             customer_phone: numero,
             customer_name: mensaje?.profile_name || 'Cliente',
-            message: mensaje?.text || '',
+            message: mensaje?.caption || mensaje?.text || null,
             message_type: mensaje?.type || 'text',
+            media_id: mensaje?.media_id || null,
+            mime_type: mensaje?.mime_type || null,
+            filename: mensaje?.filename || null,
             raw_webhook: body,
           };
           if (conversationId) {
@@ -281,8 +284,11 @@ async function enrutarMensaje(numero, body) {
         channel_id: config.asesor?.channelId || 1,
         customer_phone: numero,
         customer_name: mensaje?.profile_name || 'Cliente',
-        message: mensaje?.text || '',
+        message: mensaje?.caption || mensaje?.text || null,
         message_type: mensaje?.type || 'text',
+        media_id: mensaje?.media_id || null,
+        mime_type: mensaje?.mime_type || null,
+        filename: mensaje?.filename || null,
         raw_webhook: body,
       };
       if (conversationId) {

@@ -543,6 +543,79 @@ async function enviarMedia(numero, mediaId, tipoMedia, caption = null, filename 
 }
 
 /**
+ * Descargar media desde Meta por su ID
+ * @param {string} mediaId - ID del media en Meta
+ * @returns {Promise<{buffer: Buffer, contentType: string}>}
+ */
+async function descargarMedia(mediaId) {
+  if (!config.whatsapp.token) {
+    throw new Error('WhatsApp no configurado');
+  }
+
+  const startTime = Date.now();
+
+  try {
+    // Paso 1: obtener URL de descarga
+    const metaUrl = `${WHATSAPP_API_URL}/${mediaId}`;
+    const metaResponse = await retryOnNetworkError(
+      async () => {
+        return await axios.get(metaUrl, {
+          headers: { Authorization: `Bearer ${config.whatsapp.token}` },
+          timeout: config.whatsapp.timeout,
+        });
+      },
+      { maxRetries: 2, delay: 1000, operation: `descargarMedia metadata ${mediaId}` }
+    );
+
+    const downloadUrl = metaResponse.data?.url;
+    if (!downloadUrl) {
+      throw new Error('Meta no devolvió URL de descarga');
+    }
+
+    // Paso 2: descargar el binario
+    const fileResponse = await retryOnNetworkError(
+      async () => {
+        return await axios.get(downloadUrl, {
+          headers: { Authorization: `Bearer ${config.whatsapp.token}` },
+          responseType: 'arraybuffer',
+          timeout: 30000,
+          maxContentLength: 26 * 1024 * 1024,
+        });
+      },
+      { maxRetries: 2, delay: 1000, operation: `descargarMedia file ${mediaId}` }
+    );
+
+    const duration = Date.now() - startTime;
+    const contentType = fileResponse.headers['content-type'] || 'application/octet-stream';
+
+    logger.info(logBox('Media descargada de Meta', {
+      'Media ID': mediaId,
+      'Content-Type': contentType,
+      'Tamaño': `${(fileResponse.data.length / 1024).toFixed(1)} KB`,
+      'Duración': `${duration}ms`,
+    }, 'success'));
+
+    return {
+      buffer: Buffer.from(fileResponse.data),
+      contentType,
+    };
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    const sanitizedError = sanitizeError(error);
+
+    logger.error(logBox('Error descargando media de Meta', {
+      'Media ID': mediaId,
+      'Status': sanitizedError.status || 'N/A',
+      'Error': sanitizedError.statusText || error.message,
+      'Duración': `${duration}ms`,
+    }, 'error'));
+
+    erroresWhatsApp.labels(error.response?.status || 'network').inc();
+    throw error;
+  }
+}
+
+/**
  * Marcar mensaje como leído
  * @param {string} messageId - ID del mensaje
  * @returns {Promise<Object>}
@@ -606,22 +679,38 @@ function extraerMensaje(body) {
     // Extraer datos según tipo de mensaje
     let contenido = '';
     let tipo = mensaje.type;
+    let media_id = null;
+    let mime_type = null;
+    let filename = null;
+    let caption = null;
 
     switch (tipo) {
       case 'text':
         contenido = mensaje.text?.body || '';
         break;
       case 'image':
-        contenido = mensaje.image?.id || '';
+        media_id = mensaje.image?.id || null;
+        mime_type = mensaje.image?.mime_type || null;
+        caption = mensaje.image?.caption || null;
+        contenido = caption || '';
         break;
       case 'audio':
-        contenido = mensaje.audio?.id || '';
+        media_id = mensaje.audio?.id || null;
+        mime_type = mensaje.audio?.mime_type || null;
+        contenido = '';
         break;
       case 'video':
-        contenido = mensaje.video?.id || '';
+        media_id = mensaje.video?.id || null;
+        mime_type = mensaje.video?.mime_type || null;
+        caption = mensaje.video?.caption || null;
+        contenido = caption || '';
         break;
       case 'document':
-        contenido = mensaje.document?.id || '';
+        media_id = mensaje.document?.id || null;
+        mime_type = mensaje.document?.mime_type || null;
+        filename = mensaje.document?.filename || null;
+        caption = mensaje.document?.caption || null;
+        contenido = caption || '';
         break;
       case 'location':
         contenido = JSON.stringify(mensaje.location);
@@ -639,6 +728,10 @@ function extraerMensaje(body) {
       timestamp: mensaje.timestamp,
       type: tipo,
       text: contenido,
+      media_id,
+      mime_type,
+      filename,
+      caption,
       mensaje_completo: mensaje,
       profile_name: value?.contacts?.[0]?.profile?.name || 'Usuario',
     };
@@ -694,6 +787,7 @@ module.exports = {
   enviarTemplate,
   subirMedia,
   enviarMedia,
+  descargarMedia,
   marcarComoLeido,
   validarWebhook,
   extraerMensaje,
