@@ -124,6 +124,12 @@ const enviarMensajeSchema = Joi.object({
       'array.min': 'Debe haber al menos 1 sección',
       'array.max': 'No puede haber más de 10 secciones',
     }),
+
+  // conversation_id opcional - se usa para asociar la conversación cuando se envía re-engagement template
+  conversation_id: Joi.alternatives().try(
+    Joi.number().integer(),
+    Joi.string().max(100)
+  ).optional(),
 });
 
 /**
@@ -193,6 +199,10 @@ const enviarMediaSchema = Joi.object({
   caption: Joi.string().max(1024).optional().allow('').messages({
     'string.max': 'Caption no puede exceder 1024 caracteres',
   }),
+  conversation_id: Joi.alternatives().try(
+    Joi.number().integer(),
+    Joi.string().max(100)
+  ).optional(),
 });
 
 module.exports = {

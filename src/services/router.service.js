@@ -202,12 +202,13 @@ async function enrutarMensaje(numero, body) {
       if (!botEstado.activo && config.apps['asesor']) {
         logger.warn(`⏸️  [enrutarMensaje] Bot DESACTIVADO para ${numero}, reenviando al asesor (fallback)`);
         const mensaje = require('./whatsapp.service').extraerMensaje(body);
+        const tipoMensaje = mensaje?.type === 'button' ? 'text' : (mensaje?.type || 'text');
         const payload = {
           channel_id: config.asesor?.channelId || 1,
           customer_phone: numero,
           customer_name: mensaje?.profile_name || 'Cliente',
           message: mensaje?.text || '',
-          message_type: mensaje?.type || 'text',
+          message_type: tipoMensaje,
           raw_webhook: body,
         };
         const resultado = await enviarAApp('asesor', payload);
@@ -241,12 +242,14 @@ async function enrutarMensaje(numero, body) {
         if (config.apps['asesor']) {
           const mensaje = require('./whatsapp.service').extraerMensaje(body);
           const conversationId = await redisService.getConversationId(numero);
+          // Convertir tipo 'button' (respuesta a template) a 'text' para compatibilidad con CRM
+          const tipoMensaje = mensaje?.type === 'button' ? 'text' : (mensaje?.type || 'text');
           const payload = {
             channel_id: config.asesor?.channelId || 1,
             customer_phone: numero,
             customer_name: mensaje?.profile_name || 'Cliente',
             message: mensaje?.caption || mensaje?.text || null,
-            message_type: mensaje?.type || 'text',
+            message_type: tipoMensaje,
             media_id: mensaje?.media_id || null,
             mime_type: mensaje?.mime_type || null,
             filename: mensaje?.filename || null,
@@ -280,12 +283,14 @@ async function enrutarMensaje(numero, body) {
     if (appKey === 'asesor') {
       const mensaje = require('./whatsapp.service').extraerMensaje(body);
       const conversationId = await redisService.getConversationId(numero);
+      // Convertir tipo 'button' (respuesta a template) a 'text' para compatibilidad con CRM
+      const tipoMensaje = mensaje?.type === 'button' ? 'text' : (mensaje?.type || 'text');
       payload = {
         channel_id: config.asesor?.channelId || 1,
         customer_phone: numero,
         customer_name: mensaje?.profile_name || 'Cliente',
         message: mensaje?.caption || mensaje?.text || null,
-        message_type: mensaje?.type || 'text',
+        message_type: tipoMensaje,
         media_id: mensaje?.media_id || null,
         mime_type: mensaje?.mime_type || null,
         filename: mensaje?.filename || null,
@@ -343,12 +348,13 @@ async function enrutarMensaje(numero, body) {
       if (!botEstado.activo && config.apps['asesor']) {
         logger.warn(`⏸️  [enrutarMensaje] Bot DESACTIVADO para ${numero}, reenviando al asesor (error fallback)`);
         const mensaje = require('./whatsapp.service').extraerMensaje(body);
+        const tipoMensaje = mensaje?.type === 'button' ? 'text' : (mensaje?.type || 'text');
         const payload = {
           channel_id: config.asesor?.channelId || 1,
           customer_phone: numero,
           customer_name: mensaje?.profile_name || 'Cliente',
           message: mensaje?.text || '',
-          message_type: mensaje?.type || 'text',
+          message_type: tipoMensaje,
           raw_webhook: body,
         };
         const resultado = await enviarAApp('asesor', payload);

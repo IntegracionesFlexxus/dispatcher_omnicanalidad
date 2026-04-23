@@ -28,6 +28,8 @@ const config = {
     verifyToken: process.env.VERIFY_TOKEN || 'default_token',
     appSecret: process.env.WHATSAPP_APP_SECRET, // Para verificar firma de webhooks
     timeout: parseInt(process.env.WHATSAPP_TIMEOUT_MS, 10) || 5000,
+    reengagementTemplate: process.env.WHATSAPP_REENGAGEMENT_TEMPLATE || null,
+    reengagementLanguage: process.env.WHATSAPP_REENGAGEMENT_LANGUAGE || 'es_AR',
   },
 
   // Aplicaciones registradas

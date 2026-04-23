@@ -250,6 +250,38 @@ async function clearConversationId(numero) {
 }
 
 /**
+ * Guardar timestamp del último mensaje entrante de un número
+ * Se usa para determinar si la ventana de 24hs de WhatsApp está abierta
+ * @param {string} numero - Número de teléfono
+ */
+async function setUltimoMensajeEntrante(numero) {
+  storage.set(`ultimo_mensaje:${numero}`, Date.now());
+}
+
+/**
+ * Obtener timestamp del último mensaje entrante de un número
+ * @param {string} numero - Número de teléfono
+ * @returns {Promise<number|null>} Timestamp en ms o null
+ */
+async function getUltimoMensajeEntrante(numero) {
+  return storage.get(`ultimo_mensaje:${numero}`) || null;
+}
+
+/**
+ * Verificar si la ventana de 24hs de WhatsApp está abierta para un número
+ * Usa un margen de 23hs para evitar falsos positivos por delays
+ * @param {string} numero - Número de teléfono
+ * @returns {Promise<boolean>} true si la ventana está abierta
+ */
+async function isVentanaAbierta(numero) {
+  const ultimo = await getUltimoMensajeEntrante(numero);
+  if (!ultimo) return false;
+
+  const VENTANA_MS = 23 * 60 * 60 * 1000; // 23 horas en ms
+  return (Date.now() - ultimo) < VENTANA_MS;
+}
+
+/**
  * Health check
  * @returns {Promise<boolean>}
  */
@@ -282,4 +314,7 @@ module.exports = {
   setConversationId,
   getConversationId,
   clearConversationId,
+  setUltimoMensajeEntrante,
+  getUltimoMensajeEntrante,
+  isVentanaAbierta,
 };

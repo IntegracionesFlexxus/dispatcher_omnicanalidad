@@ -4,6 +4,7 @@ const config = require('../config');
 const logger = require('../utils/logger');
 const whatsappService = require('../services/whatsapp.service');
 const routerService = require('../services/router.service');
+const redisService = require('../services/redis.service');
 const { asyncHandler } = require('../middlewares/errorHandler');
 const { validateQuery } = require('../middlewares/validator');
 const { webhookVerificationSchema } = require('../validators/schemas');
@@ -72,6 +73,9 @@ router.post(
       if (mensaje) {
         logger.info(logWhatsAppMessage(mensaje));
 
+        // Registrar timestamp del mensaje entrante (para ventana de 24hs)
+        await redisService.setUltimoMensajeEntrante(mensaje.from);
+
         // Enrutar mensaje
         const resultado = await routerService.enrutarMensaje(mensaje.from, body);
 
@@ -94,11 +98,19 @@ router.post(
       const status = whatsappService.extraerStatus(body);
 
       if (status) {
-        logger.info(logBox('Status Update Recibido', {
+        const statusDetails = {
           'ID': status.id,
           'Estado': status.status,
           'Destinatario': status.recipient_id,
-        }, 'info'));
+        };
+
+        if (status.status === 'failed' && status.errors.length > 0) {
+          statusDetails['Error Code'] = status.errors[0].code;
+          statusDetails['Error'] = status.errors[0].title;
+          logger.error(logBox('Status Update FAILED', statusDetails, 'error'));
+        } else {
+          logger.info(logBox('Status Update Recibido', statusDetails, 'info'));
+        }
         return;
       }
 

@@ -364,11 +364,7 @@ async function enviarTemplate(numero, templateName, languageCode = 'es', compone
 
     return response.data;
   } catch (error) {
-    logger.error(`❌ Error enviando template a ${numero}:`, {
-      template: templateName,
-      error: error.message,
-      response: error.response?.data,
-    });
+    logger.error(`TEMPLATE ERROR DETAIL: status=${error.response?.status} data=${JSON.stringify(error.response?.data)}`);
 
     erroresWhatsApp.labels('template').inc();
     throw error;
@@ -718,6 +714,9 @@ function extraerMensaje(body) {
       case 'interactive':
         contenido = JSON.stringify(mensaje.interactive);
         break;
+      case 'button':
+        contenido = mensaje.button?.text || mensaje.button?.payload || '';
+        break;
       default:
         contenido = '';
     }
@@ -765,6 +764,7 @@ function extraerStatus(body) {
       status: status.status, // sent, delivered, read, failed
       timestamp: status.timestamp,
       recipient_id: status.recipient_id,
+      errors: status.errors || [],
     };
   } catch (error) {
     logger.error('Error extrayendo status:', { error: error.message });

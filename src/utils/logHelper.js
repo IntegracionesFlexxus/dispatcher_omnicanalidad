@@ -207,6 +207,10 @@ function logWebhookReceived(body) {
       'Estado': status.status,
       'Destinatario': status.recipient_id,
     };
+    if (status.status === 'failed' && status.errors?.length > 0) {
+      details['Error Code'] = status.errors[0].code;
+      details['Error'] = status.errors[0].title;
+    }
   }
 
   return logBox(`Webhook Recibido (${type})`, details, 'info');

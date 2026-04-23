@@ -17,6 +17,7 @@ const {
   enviarMediaSchema,
 } = require('../validators/schemas');
 const multer = require('multer');
+const { logBox } = require('../utils/logHelper');
 
 // Configurar multer en memoria (no escribe a disco)
 const upload = multer({
@@ -40,6 +41,64 @@ const ALLOWED_MEDIA_TYPES = {
   'text/csv': { tipo: 'document', maxSize: 25 * 1024 * 1024 },
 };
 const { register: metricsRegister } = require('../utils/metrics');
+
+/**
+ * Verificar ventana de 24hs y enviar template de re-engagement si es necesario.
+ * Retorna true si la ventana está abierta (o se reabrió con template), false si no se puede enviar.
+ * @param {string} numero - Número de teléfono
+ * @returns {Promise<{abierta: boolean, templateEnviado: boolean}>}
+ */
+async function verificarVentanaYReabrir(numero, conversationId = null) {
+  const ventanaAbierta = await redisService.isVentanaAbierta(numero);
+
+  if (ventanaAbierta) {
+    return { abierta: true, templateEnviado: false };
+  }
+
+  // Ventana cerrada - intentar reabrir con template
+  const templateName = config.whatsapp.reengagementTemplate;
+
+  if (!templateName) {
+    logger.warn(logBox('Ventana de 24hs cerrada', {
+      'Número': numero,
+      'Template': 'No configurado (WHATSAPP_REENGAGEMENT_TEMPLATE)',
+      'Acción': 'Mensaje enviado sin verificación de ventana',
+    }, 'warning'));
+    // Sin template configurado, dejamos que Meta decida (puede fallar con 131047)
+    return { abierta: true, templateEnviado: false };
+  }
+
+  logger.info(logBox('Ventana de 24hs cerrada - Enviando template', {
+    'Número': numero,
+    'Template': templateName,
+    'Idioma': config.whatsapp.reengagementLanguage,
+  }, 'info'));
+
+  await whatsappService.enviarTemplate(
+    numero,
+    templateName,
+    config.whatsapp.reengagementLanguage
+  );
+  await redisService.incrementStats('templates_reengagement');
+
+  // Asegurar que cuando el usuario responda al template, el mensaje llegue al CRM
+  await redisService.setAppAsignada(numero, 'asesor');
+  await redisService.setBotEstado(numero, {
+    activo: false,
+    desactivado_en: new Date().toISOString(),
+    motivo: 'Re-engagement template enviado',
+  });
+
+  // Guardar conversation_id si fue proporcionado, para que la respuesta del botón
+  // se asocie a la conversación existente en el CRM
+  if (conversationId) {
+    await redisService.setConversationId(numero, conversationId);
+  }
+
+  // Con template Marketing, la ventana no se abre hasta que el usuario responda.
+  // No se debe enviar el mensaje original, solo el template.
+  return { abierta: false, templateEnviado: true };
+}
 
 /**
  * Rutas administrativas (requieren autenticación)
@@ -125,7 +184,22 @@ router.post(
   authenticate,
   validateBody(enviarMensajeSchema),
   asyncHandler(async (req, res) => {
-    const { numero, mensaje, buttons, sections, button_text, body_text, header_text, footer_text } = req.body;
+    const { numero, mensaje, buttons, sections, button_text, body_text, header_text, footer_text, conversation_id } = req.body;
+
+    // Verificar ventana de 24hs y reabrir con template si es necesario
+    const { abierta, templateEnviado } = await verificarVentanaYReabrir(numero, conversation_id);
+
+    // Si la ventana está cerrada y se envió template, no enviar el mensaje original.
+    // El usuario debe responder al template primero para abrir la ventana.
+    if (!abierta && templateEnviado) {
+      return res.json({
+        ok: true,
+        tipo: 'template_reengagement',
+        mensaje: 'Ventana de 24hs cerrada. Se envió template de re-engagement. El mensaje se podrá enviar cuando el usuario responda.',
+        ventana_reabierta: false,
+        mensaje_pendiente: true,
+      });
+    }
 
     // Detectar tipo de mensaje
     if (buttons && buttons.length > 0) {
@@ -235,8 +309,21 @@ router.post(
       });
     }
 
-    const { numero, caption } = value;
+    const { numero, caption, conversation_id } = value;
     const { mimetype, buffer, originalname, size } = req.file;
+
+    // Verificar ventana de 24hs y reabrir con template si es necesario
+    const { abierta, templateEnviado } = await verificarVentanaYReabrir(numero, conversation_id);
+
+    if (!abierta && templateEnviado) {
+      return res.json({
+        success: true,
+        tipo: 'template_reengagement',
+        mensaje: 'Ventana de 24hs cerrada. Se envió template de re-engagement. El archivo se podrá enviar cuando el usuario responda.',
+        ventana_reabierta: false,
+        mensaje_pendiente: true,
+      });
+    }
 
     // Validar mime type permitido
     const mediaConfig = ALLOWED_MEDIA_TYPES[mimetype];
@@ -318,10 +405,13 @@ router.post(
 
     // Enviar mensaje de despedida si se solicita
     if (mensaje_despedida !== false) {
-      await whatsappService.enviarMensaje(
-        numero,
-        '👋 Conversación finalizada. Si necesitas ayuda, vuelve a escribir.'
-      );
+      const { abierta } = await verificarVentanaYReabrir(numero);
+      if (abierta) {
+        await whatsappService.enviarMensaje(
+          numero,
+          '👋 Conversación finalizada. Si necesitas ayuda, vuelve a escribir.'
+        );
+      }
     }
 
     res.json({
