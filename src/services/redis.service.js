@@ -275,7 +275,7 @@ async function getUltimoMensajeEntrante(numero) {
  */
 async function isVentanaAbierta(numero) {
   const ultimo = await getUltimoMensajeEntrante(numero);
-  if (!ultimo) return false;
+  if (!ultimo) return true; // Sin datos, asumir ventana abierta (dejar que Meta decida)
 
   const VENTANA_MS = 23 * 60 * 60 * 1000; // 23 horas en ms
   return (Date.now() - ultimo) < VENTANA_MS;
