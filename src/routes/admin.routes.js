@@ -15,6 +15,8 @@ const {
   numeroParamSchema,
   enviarTemplateSchema,
   enviarMediaSchema,
+  finalizarEncuestaSchema,
+  iniciarEncuestaSchema,
 } = require('../validators/schemas');
 const multer = require('multer');
 const { logBox } = require('../utils/logHelper');
@@ -527,6 +529,73 @@ router.get(
 );
 
 /**
+ * POST /encuesta/iniciar/:numero - Iniciar encuesta para un número
+ * Llamado por el servicio Encuestador al disparar el template de apertura
+ * o al iniciar la encuesta por cualquier vía.
+ * Marca routing en Redis a 'encuestador' con TTL controlado, sin callback.
+ */
+router.post(
+  '/encuesta/iniciar/:numero',
+  authenticate,
+  validateParams(numeroParamSchema),
+  validateBody(iniciarEncuestaSchema),
+  asyncHandler(async (req, res) => {
+    const { numero } = req.params;
+    const { survey_instance_id, phase, ttl_seconds } = req.body;
+
+    const resultado = await routerService.iniciarEncuesta(numero, {
+      surveyInstanceId: survey_instance_id,
+      phase,
+      ttlSeconds: ttl_seconds,
+    });
+
+    if (!resultado.ok) {
+      return res.status(503).json(resultado);
+    }
+
+    res.json(resultado);
+  })
+);
+
+/**
+ * POST /encuesta/finalizar/:numero - Finalizar encuesta para un número
+ * Llamado por el servicio Encuestador cuando la encuesta termina
+ */
+router.post(
+  '/encuesta/finalizar/:numero',
+  authenticate,
+  validateParams(numeroParamSchema),
+  validateBody(finalizarEncuestaSchema),
+  asyncHandler(async (req, res) => {
+    const { numero } = req.params;
+    const { motivo, survey_instance_id, mensaje_despedida } = req.body;
+
+    const resultado = await routerService.finalizarEncuesta(numero, motivo, survey_instance_id);
+
+    if (!resultado.ok) {
+      return res.status(404).json(resultado);
+    }
+
+    // Enviar mensaje de despedida si se solicita
+    if (mensaje_despedida) {
+      try {
+        const { abierta } = await verificarVentanaYReabrir(numero);
+        if (abierta) {
+          await whatsappService.enviarMensaje(
+            numero,
+            '¡Muchas gracias por tu tiempo! Si necesitas ayuda, vuelve a escribirnos.'
+          );
+        }
+      } catch (error) {
+        logger.warn(`⚠️  Error enviando despedida de encuesta a ${numero}: ${error.message}`);
+      }
+    }
+
+    res.json(resultado);
+  })
+);
+
+/**
  * GET /estado - Ver estado del sistema
  */
 router.get(
@@ -588,6 +657,8 @@ router.get('/', (req, res) => {
       enviarTemplate: 'POST /enviar-template',
       transferir: 'POST /transferir',
       finalizar: 'POST /finalizar/:numero',
+      encuestaIniciar: 'POST /encuesta/iniciar/:numero',
+      encuestaFinalizar: 'POST /encuesta/finalizar/:numero',
       botDesactivar: 'POST /bot/desactivar/:numero',
       botActivar: 'POST /bot/activar/:numero',
       botEstado: 'GET /bot/estado/:numero',

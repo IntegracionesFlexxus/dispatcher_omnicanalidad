@@ -175,6 +175,100 @@ async function enviarAApp(appKey, body) {
 }
 
 /**
+ * Consultar al servicio Encuestador si un número tiene encuesta activa
+ * @param {string} numero - Número de teléfono
+ * @returns {Promise<{has_active_survey: boolean, phase: string|null, survey_instance_id: number|null}>}
+ */
+async function consultarEncuestadorStatus(numero) {
+  const statusUrl = config.encuestador?.statusUrl;
+  const encuestadorRegistrado = !!config.apps['encuestador'];
+
+  if (!statusUrl || !encuestadorRegistrado) {
+    logger.warn(logBox('Encuestador NO consultado - Config faltante', {
+      'Número': numero,
+      'ENCUESTADOR_STATUS_URL': statusUrl || '(no configurado)',
+      'App "encuestador" registrada': encuestadorRegistrado ? 'Sí' : 'No',
+      'Apps disponibles': Object.keys(config.apps).join(', ') || '(ninguna)',
+      'Acción': 'Saltando consulta - el routing irá a bot/asesor',
+    }, 'warning'));
+    return { has_active_survey: false, phase: null, survey_instance_id: null };
+  }
+
+  try {
+    const url = `${statusUrl}/${numero}`;
+    logger.info(`📊 [encuestador] Consultando status: ${url}`);
+
+    const headers = { 'X-Dispatcher': 'true' };
+    if (config.encuestador.apiKey) {
+      headers['X-API-Key'] = config.encuestador.apiKey;
+    }
+
+    const response = await axios.get(url, {
+      timeout: config.encuestador.statusTimeout,
+      headers,
+      validateStatus: (status) => status < 500,
+    });
+
+    if (response.status === 200 && response.data?.ok) {
+      logger.info(logBox('Encuestador Status - Respuesta', {
+        'Número': numero,
+        'has_active_survey': response.data.has_active_survey,
+        'phase': response.data.phase || '(null)',
+        'survey_instance_id': response.data.survey_instance_id || '(null)',
+      }, 'info'));
+      return {
+        has_active_survey: response.data.has_active_survey || false,
+        phase: response.data.phase || null,
+        survey_instance_id: response.data.survey_instance_id || null,
+      };
+    }
+
+    logger.warn(logBox('Encuestador Status - Respuesta inesperada', {
+      'Número': numero,
+      'URL': url,
+      'Status HTTP': response.status,
+      'data.ok': response.data?.ok,
+      'Body': JSON.stringify(response.data).substring(0, 200),
+      'Acción': 'Asumiendo sin encuesta activa',
+    }, 'warning'));
+
+    return { has_active_survey: false, phase: null, survey_instance_id: null };
+  } catch (error) {
+    logger.warn(logBox('Encuestador Status - Error', {
+      'Número': numero,
+      'URL': `${statusUrl}/${numero}`,
+      'Error': error.message,
+      'Código': error.code || 'N/A',
+      'Acción': 'Continuando flujo normal (asumiendo sin encuesta)',
+    }, 'warning'));
+
+    return { has_active_survey: false, phase: null, survey_instance_id: null };
+  }
+}
+
+/**
+ * Transformar payload del webhook para el formato que espera el Encuestador
+ * @param {string} numero - Número de teléfono
+ * @param {Object} body - Body del webhook original
+ * @returns {Object} Payload transformado
+ */
+function transformarPayloadEncuestador(numero, body) {
+  const mensaje = whatsappService.extraerMensaje(body);
+  const tipoMensaje = mensaje?.type || 'text';
+
+  return {
+    customer_phone: numero,
+    customer_name: mensaje?.profile_name || 'Cliente',
+    message: mensaje?.caption || mensaje?.text || null,
+    message_type: tipoMensaje,
+    media_id: mensaje?.media_id || null,
+    mime_type: mensaje?.mime_type || null,
+    filename: mensaje?.filename || null,
+    raw_webhook: body,
+  };
+}
+
+/**
  * Enrutar mensaje a la aplicación correcta según routing en Redis
  * @param {string} numero - Número de teléfono
  * @param {Object} body - Body del webhook
@@ -182,10 +276,109 @@ async function enviarAApp(appKey, body) {
  */
 async function enrutarMensaje(numero, body) {
   try {
-    // Obtener app asignada desde Redis
-    const appKey = await redisService.getAppAsignada(numero);
+    // 0. Cooldown post-encuesta: durante este TTL ignoramos mensajes para que
+    //    el bot no dispare un saludo inmediatamente después de la encuesta.
+    if (await redisService.isPostEncuestaCooldown(numero)) {
+      logger.info(logBox('Mensaje IGNORADO - Cooldown post-encuesta', {
+        'Número': numero,
+        'Acción': 'No se reenvía a ninguna app',
+        'Detalle': 'Esperando que expire el TTL del cooldown',
+      }, 'warning'));
+
+      await redisService.incrementStats('mensajes_total');
+      await redisService.incrementStats('mensajes_cooldown_ignorados');
+
+      return {
+        appKey: 'cooldown',
+        appNombre: 'POST-ENCUESTA COOLDOWN',
+        ignored: true,
+        cooldown_active: true,
+      };
+    }
+
+    // 1. Side-track encuestador: detour temporal sobre el routing principal.
+    //    Si está activo, todos los mensajes van al encuestador y renovamos TTL.
+    //    El routing principal (bot/asesor) queda intacto.
+    const sideTrack = await redisService.getSideTrackEncuesta(numero);
+
+    if (sideTrack === 'encuestador') {
+      logger.info(`📊 [enrutarMensaje] Side-track encuestador activo para ${numero}, renovando TTL`);
+      await redisService.setSideTrackEncuesta(numero, config.encuestador.routingTtl);
+
+      const payload = transformarPayloadEncuestador(numero, body);
+      const resultado = await enviarAApp('encuestador', payload);
+
+      await redisService.incrementStats('mensajes_total');
+      await redisService.incrementStats('mensajes_encuestador');
+      mensajesRecibidos.labels('encuestador').inc();
+
+      logger.info(logBox('Enrutamiento Completado', {
+        'Número': numero,
+        'App': 'ENCUESTADOR',
+        'Éxito': resultado.success ? 'Sí' : 'No',
+        'TTL renovado': `${config.encuestador.routingTtl}s`,
+        'Routing principal': await redisService.getAppAsignada(numero),
+      }, 'success'));
+
+      return {
+        appKey: 'encuestador',
+        appNombre: config.apps['encuestador'].nombre,
+        resultado,
+        sidetrack: true,
+      };
+    }
+
+    // 2. Routing principal (bot/asesor)
+    let appKey = await redisService.getAppAsignada(numero);
 
     logger.info(logRouting(numero, null, appKey, 'Routing desde Redis'));
+
+    // 3. Red de seguridad: consultar al encuestador por encuestas activas que
+    //    se hayan iniciado fuera de banda (sin pasar por POST /encuesta/iniciar).
+    //    Si hay una activa, levantamos el side-track sin tocar el routing
+    //    principal y reenviamos al encuestador.
+    const encuestaStatus = await consultarEncuestadorStatus(numero);
+
+    if (encuestaStatus.has_active_survey) {
+      logger.info(logBox('Encuesta Activa Detectada (out-of-band)', {
+        'Número': numero,
+        'Phase': encuestaStatus.phase,
+        'Survey ID': encuestaStatus.survey_instance_id,
+        'Routing principal': appKey,
+        'Acción': 'Activando side-track encuestador (routing principal preservado)',
+      }, 'info'));
+
+      await redisService.setSideTrackEncuesta(numero, config.encuestador.routingTtl);
+
+      const payload = transformarPayloadEncuestador(numero, body);
+      const resultado = await enviarAApp('encuestador', payload);
+
+      await redisService.incrementStats('mensajes_total');
+      await redisService.incrementStats('mensajes_encuestador');
+      await redisService.incrementStats('encuestas_activadas');
+      mensajesRecibidos.labels('encuestador').inc();
+
+      logger.info(logBox('Enrutamiento Completado', {
+        'Número': numero,
+        'App': 'ENCUESTADOR',
+        'Éxito': resultado.success ? 'Sí' : 'No',
+        'Routing principal': `preservado (${appKey})`,
+      }, 'success'));
+
+      return {
+        appKey: 'encuestador',
+        appNombre: config.apps['encuestador'].nombre,
+        resultado,
+        sidetrack: true,
+        routing_principal: appKey,
+      };
+    }
+
+    logger.info(logBox('Encuesta NO activa - Continuando routing normal', {
+      'Número': numero,
+      'App destino': appKey,
+      'Detalle': 'consultarEncuestadorStatus devolvió has_active_survey=false',
+    }, 'info'));
 
     const app = config.apps[appKey];
 
@@ -201,7 +394,7 @@ async function enrutarMensaje(numero, body) {
       const botEstado = await redisService.getBotEstado(numero);
       if (!botEstado.activo && config.apps['asesor']) {
         logger.warn(`⏸️  [enrutarMensaje] Bot DESACTIVADO para ${numero}, reenviando al asesor (fallback)`);
-        const mensaje = require('./whatsapp.service').extraerMensaje(body);
+        const mensaje = whatsappService.extraerMensaje(body);
         const tipoMensaje = mensaje?.type === 'button' ? 'text' : (mensaje?.type || 'text');
         const payload = {
           channel_id: config.asesor?.channelId || 1,
@@ -240,7 +433,7 @@ async function enrutarMensaje(numero, body) {
         await redisService.incrementStats('mensajes_bot_desactivado');
 
         if (config.apps['asesor']) {
-          const mensaje = require('./whatsapp.service').extraerMensaje(body);
+          const mensaje = whatsappService.extraerMensaje(body);
           const conversationId = await redisService.getConversationId(numero);
           // Convertir tipo 'button' (respuesta a template) a 'text' para compatibilidad con CRM
           const tipoMensaje = mensaje?.type === 'button' ? 'text' : (mensaje?.type || 'text');
@@ -281,7 +474,7 @@ async function enrutarMensaje(numero, body) {
     // Transformar payload para asesor (espera channel_id, customer_phone, customer_name)
     let payload = body;
     if (appKey === 'asesor') {
-      const mensaje = require('./whatsapp.service').extraerMensaje(body);
+      const mensaje = whatsappService.extraerMensaje(body);
       const conversationId = await redisService.getConversationId(numero);
       // Convertir tipo 'button' (respuesta a template) a 'text' para compatibilidad con CRM
       const tipoMensaje = mensaje?.type === 'button' ? 'text' : (mensaje?.type || 'text');
@@ -347,7 +540,7 @@ async function enrutarMensaje(numero, body) {
       const botEstado = await redisService.getBotEstado(numero);
       if (!botEstado.activo && config.apps['asesor']) {
         logger.warn(`⏸️  [enrutarMensaje] Bot DESACTIVADO para ${numero}, reenviando al asesor (error fallback)`);
-        const mensaje = require('./whatsapp.service').extraerMensaje(body);
+        const mensaje = whatsappService.extraerMensaje(body);
         const tipoMensaje = mensaje?.type === 'button' ? 'text' : (mensaje?.type || 'text');
         const payload = {
           channel_id: config.asesor?.channelId || 1,
@@ -676,11 +869,136 @@ function getCircuitBreakerStats() {
   return stats;
 }
 
+/**
+ * Iniciar encuesta para un número.
+ * Marca el routing en Redis hacia 'encuestador' con TTL controlado, sin
+ * disparar callback al encuestador (a diferencia de transferir()).
+ * Llamado por el servicio Encuestador al enviar el template de apertura.
+ * @param {string} numero - Número de teléfono
+ * @param {Object} opts - { surveyInstanceId, phase, ttlSeconds }
+ * @returns {Promise<{ok, app_anterior, app_actual, ttl_seconds, survey_instance_id, phase}>}
+ */
+async function iniciarEncuesta(numero, opts = {}) {
+  const { surveyInstanceId = null, phase = null, ttlSeconds = null } = opts;
+
+  if (!config.apps['encuestador']) {
+    logger.warn(logBox('Iniciar Encuesta - App no registrada', {
+      'Número': numero,
+      'Apps disponibles': Object.keys(config.apps).join(', ') || '(ninguna)',
+      'Acción': 'Rechazando solicitud',
+    }, 'warning'));
+    return {
+      ok: false,
+      error: 'La app "encuestador" no está registrada en el dispatcher',
+      app_actual: await redisService.getAppAsignada(numero),
+    };
+  }
+
+  const ttl = ttlSeconds || config.encuestador.routingTtl;
+  const routingPrincipal = await redisService.getAppAsignada(numero);
+
+  // Activamos el side-track de encuesta. NO tocamos el routing principal:
+  // cuando termine la encuesta, los mensajes vuelven solos a bot/asesor.
+  await redisService.setSideTrackEncuesta(numero, ttl);
+
+  // Si quedó un cooldown pendiente de una encuesta anterior, lo limpiamos
+  // para no bloquear los mensajes de la encuesta nueva.
+  await redisService.clearPostEncuestaCooldown(numero);
+
+  await redisService.incrementStats('encuestas_iniciadas');
+
+  logger.info(logBox('Encuesta Iniciada', {
+    'Número': numero,
+    'Routing principal (preservado)': routingPrincipal,
+    'Side-track': 'encuestador',
+    'TTL': `${ttl}s`,
+    'Survey ID': surveyInstanceId || 'N/A',
+    'Phase': phase || 'N/A',
+  }, 'success'));
+
+  return {
+    ok: true,
+    app_anterior: routingPrincipal,
+    app_actual: 'encuestador',
+    routing_principal_preservado: routingPrincipal,
+    ttl_seconds: ttl,
+    survey_instance_id: surveyInstanceId,
+    phase,
+  };
+}
+
+/**
+ * Finalizar encuesta para un número (volver al bot)
+ * Llamado por el servicio Encuestador cuando la encuesta termina
+ * @param {string} numero - Número de teléfono
+ * @param {string} motivo - Motivo de finalización (completada, cancelada, timeout, rechazada)
+ * @param {number} surveyInstanceId - ID de la instancia de encuesta
+ * @returns {Promise<Object>}
+ */
+async function finalizarEncuesta(numero, motivo = '', surveyInstanceId = null) {
+  const sideTrack = await redisService.getSideTrackEncuesta(numero);
+  const routingPrincipal = await redisService.getAppAsignada(numero);
+
+  if (sideTrack !== 'encuestador') {
+    logger.warn(logBox('Finalizar Encuesta - No activa', {
+      'Número': numero,
+      'Side-track': sideTrack || '(ninguno)',
+      'Routing principal': routingPrincipal,
+      'Motivo': motivo,
+    }, 'warning'));
+
+    return {
+      ok: false,
+      error: 'El número no tiene encuesta activa en el dispatcher',
+      app_actual: routingPrincipal,
+    };
+  }
+
+  logger.info(logBox('Finalizando Encuesta', {
+    'Número': numero,
+    'Motivo': motivo || 'No especificado',
+    'Survey ID': surveyInstanceId || 'N/A',
+  }, 'info'));
+
+  // Apagar el side-track. El routing principal NO se toca: el usuario
+  // queda con bot/asesor según corresponda.
+  await redisService.clearSideTrackEncuesta(numero);
+
+  // Activar cooldown post-encuesta para evitar que el bot dispare un saludo
+  // si el usuario manda algún mensaje justo después del cierre.
+  await redisService.setPostEncuestaCooldown(numero, config.encuestador.cooldownTtl);
+
+  // Incrementar stats
+  await redisService.incrementStats('encuestas_finalizadas');
+  await redisService.incrementStats(`encuestas_${motivo || 'sin_motivo'}`);
+  finalizaciones.inc();
+
+  logger.info(logBox('Encuesta Finalizada', {
+    'Número': numero,
+    'Side-track': 'apagado',
+    'Routing principal': routingPrincipal,
+    'Cooldown TTL': `${config.encuestador.cooldownTtl}s`,
+    'Motivo': motivo,
+    'Survey ID': surveyInstanceId,
+  }, 'success'));
+
+  return {
+    ok: true,
+    app_anterior: 'encuestador',
+    app_actual: routingPrincipal,
+    cooldown_seconds: config.encuestador.cooldownTtl,
+    motivo,
+    survey_instance_id: surveyInstanceId,
+  };
+}
+
 module.exports = {
   enviarAApp,
   enrutarMensaje,
   transferir,
   finalizar,
+  iniciarEncuesta,
+  finalizarEncuesta,
   desactivarBot,
   activarBot,
   getEstadoBot,

@@ -7,7 +7,10 @@
       "Bash(node:*)",
       "Bash(find \"D:\\\\\\\\Github\\\\\\\\dispatcher_omnicanalidad\" -name \"*.md\" -o -name \"*.json\")",
       "Bash(grep -n \"status.error\\\\|status.errors\\\\|status.error_code\\\\|status.error_title\" \"D:\\\\\\\\Github\\\\\\\\dispatcher_omnicanalidad\\\\\\\\src\\\\\\\\services\\\\\\\\whatsapp.service.js\")",
-      "Bash(ls -lah /d/Github/dispatcher_omnicanalidad/*.md)"
+      "Bash(ls -lah /d/Github/dispatcher_omnicanalidad/*.md)",
+      "Bash(docker compose *)",
+      "Bash(docker info *)",
+      "Bash(curl -s \"https://hub.docker.com/v2/repositories/fabreguesm/dispatcher_omnicanalidad-dispatcher/tags?page_size=20\")"
     ],
     "deny": [],
     "ask": []

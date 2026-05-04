@@ -177,6 +177,8 @@ async function iniciar() {
       logger.info(`   • Webhook:      POST http://localhost:${config.PORT}/webhook`);
       logger.info(`   • Enviar:       POST http://localhost:${config.PORT}/enviar`);
       logger.info(`   • Transferir:   POST http://localhost:${config.PORT}/transferir`);
+      logger.info(`   • Encuesta In.: POST http://localhost:${config.PORT}/encuesta/iniciar/:numero`);
+      logger.info(`   • Encuesta Fi.: POST http://localhost:${config.PORT}/encuesta/finalizar/:numero`);
       logger.info(`   • Estado:       GET  http://localhost:${config.PORT}/estado`);
       logger.info(`   • Métricas:     GET  http://localhost:${config.PORT}/metrics`);
       logger.info('');

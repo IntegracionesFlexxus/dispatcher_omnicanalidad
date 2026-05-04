@@ -41,6 +41,18 @@ const config = {
     apiKey: process.env.ASESOR_API_KEY || 'dev-external-key-change-in-production',
   },
 
+  // Configuración específica del encuestador
+  encuestador: {
+    statusUrl: process.env.ENCUESTADOR_STATUS_URL || null,
+    statusTimeout: parseInt(process.env.ENCUESTADOR_STATUS_TIMEOUT_MS, 10) || 3000,
+    apiKey: process.env.ENCUESTADOR_API_KEY || null,
+    routingTtl: parseInt(process.env.ENCUESTADOR_ROUTING_TTL_SECONDS, 10) || 600, // 10 min default
+    cooldownTtl: parseInt(process.env.ENCUESTADOR_COOLDOWN_TTL_SECONDS, 10) || 600, // 10 min de silencio post-encuesta
+  },
+
+  // Deduplicación de webhooks (TTL del cache de wamid procesados)
+  webhookDedupTtl: parseInt(process.env.WEBHOOK_DEDUP_TTL_SECONDS, 10) || 300, // 5 min
+
   // Seguridad
   apiKey: process.env.API_KEY,
 
@@ -88,6 +100,19 @@ function validateConfig() {
 
   if (Object.keys(config.apps).length === 0) {
     errors.push('No hay aplicaciones configuradas (variables *_APP)');
+  }
+
+  // Validación cruzada: ENCUESTADOR_APP y ENCUESTADOR_STATUS_URL deben ir juntos
+  const encuestadorApp = !!config.apps['encuestador'];
+  const encuestadorStatusUrl = !!config.encuestador.statusUrl;
+  if (encuestadorApp && !encuestadorStatusUrl) {
+    console.warn('⚠️  ENCUESTADOR_APP está configurado pero falta ENCUESTADOR_STATUS_URL');
+    console.warn('   El dispatcher no podrá detectar encuestas activas vía status endpoint (Opción B)');
+    console.warn('   Solo funcionará con routing explícito vía POST /encuesta/iniciar/:numero (Opción A)');
+  }
+  if (!encuestadorApp && encuestadorStatusUrl) {
+    console.warn('⚠️  ENCUESTADOR_STATUS_URL está configurado pero falta ENCUESTADOR_APP');
+    console.warn('   El dispatcher no podrá enrutar mensajes al encuestador');
   }
 
   if (errors.length > 0 && config.isProduction()) {

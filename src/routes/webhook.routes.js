@@ -73,6 +73,20 @@ router.post(
       if (mensaje) {
         logger.info(logWhatsAppMessage(mensaje));
 
+        // Deduplicación: Meta y/o el proxy delante del dispatcher pueden
+        // entregar el mismo wamid varias veces. Si ya lo procesamos
+        // recientemente, salimos sin reenviar a las apps.
+        if (await redisService.isWamidProcessed(mensaje.id)) {
+          logger.warn(logBox('Webhook DUPLICADO - wamid ya procesado', {
+            'wamid': mensaje.id,
+            'De': mensaje.from,
+            'Acción': 'Ignorando reenvío',
+          }, 'warning'));
+          await redisService.incrementStats('webhooks_duplicados');
+          return;
+        }
+        await redisService.markWamidProcessed(mensaje.id, config.webhookDedupTtl);
+
         // Registrar timestamp del mensaje entrante (para ventana de 24hs)
         await redisService.setUltimoMensajeEntrante(mensaje.from);
 

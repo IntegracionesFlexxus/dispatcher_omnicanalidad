@@ -1,6 +1,7 @@
 const config = require('../config');
 const logger = require('../utils/logger');
 const { conversacionesActivas } = require('../utils/metrics');
+const { normalizePhone } = require('../utils/phone');
 
 /**
  * Servicio de almacenamiento EN MEMORIA (sin Redis)
@@ -56,6 +57,7 @@ function isRedisConnected() {
  * @returns {Promise<string>} App key (default: 'bot')
  */
 async function getAppAsignada(numero) {
+  numero = normalizePhone(numero);
   try {
     // Verificar si expiró
     const expireTime = expirations.get(`routing:${numero}`);
@@ -80,6 +82,7 @@ async function getAppAsignada(numero) {
  * @param {number} ttl - TTL en segundos (default: 86400 = 24 horas)
  */
 async function setAppAsignada(numero, app, ttl = 86400) {
+  numero = normalizePhone(numero);
   try {
     storage.set(`routing:${numero}`, app);
 
@@ -99,6 +102,7 @@ async function setAppAsignada(numero, app, ttl = 86400) {
  * @param {string} numero - Número de teléfono
  */
 async function clearAppAsignada(numero) {
+  numero = normalizePhone(numero);
   try {
     storage.delete(`routing:${numero}`);
     expirations.delete(`routing:${numero}`);
@@ -186,6 +190,7 @@ async function getAllRoutings() {
  * @returns {Promise<{activo: boolean, desactivado_en: string|null, motivo: string|null}>}
  */
 async function getBotEstado(numero) {
+  numero = normalizePhone(numero);
   const data = storage.get(`bot:desactivado:${numero}`);
   if (!data) {
     return { activo: true, desactivado_en: null, motivo: null };
@@ -199,6 +204,7 @@ async function getBotEstado(numero) {
  * @param {Object} estado - { activo, desactivado_en, motivo }
  */
 async function setBotEstado(numero, estado) {
+  numero = normalizePhone(numero);
   if (estado.activo) {
     storage.delete(`bot:desactivado:${numero}`);
   } else {
@@ -228,6 +234,7 @@ async function getAllBotDesactivados() {
  * @param {number|string} conversationId - ID de conversación del asesor
  */
 async function setConversationId(numero, conversationId) {
+  numero = normalizePhone(numero);
   storage.set(`conversation:${numero}`, conversationId);
   logger.info(`💬 Conversation ID guardado: ${numero} → ${conversationId}`);
 }
@@ -238,6 +245,7 @@ async function setConversationId(numero, conversationId) {
  * @returns {Promise<number|string|null>}
  */
 async function getConversationId(numero) {
+  numero = normalizePhone(numero);
   return storage.get(`conversation:${numero}`) || null;
 }
 
@@ -246,6 +254,7 @@ async function getConversationId(numero) {
  * @param {string} numero - Número de teléfono
  */
 async function clearConversationId(numero) {
+  numero = normalizePhone(numero);
   storage.delete(`conversation:${numero}`);
 }
 
@@ -255,6 +264,7 @@ async function clearConversationId(numero) {
  * @param {string} numero - Número de teléfono
  */
 async function setUltimoMensajeEntrante(numero) {
+  numero = normalizePhone(numero);
   storage.set(`ultimo_mensaje:${numero}`, Date.now());
 }
 
@@ -264,6 +274,7 @@ async function setUltimoMensajeEntrante(numero) {
  * @returns {Promise<number|null>} Timestamp en ms o null
  */
 async function getUltimoMensajeEntrante(numero) {
+  numero = normalizePhone(numero);
   return storage.get(`ultimo_mensaje:${numero}`) || null;
 }
 
@@ -279,6 +290,103 @@ async function isVentanaAbierta(numero) {
 
   const VENTANA_MS = 23 * 60 * 60 * 1000; // 23 horas en ms
   return (Date.now() - ultimo) < VENTANA_MS;
+}
+
+// ============================================================
+// Side-track encuestador
+// ------------------------------------------------------------
+// El encuestador es un "detour" temporal: el routing principal
+// (bot/asesor) NO se pisa cuando arranca una encuesta. Se guarda
+// la encuesta como side-track con TTL propio y, cuando termina,
+// el routing principal sigue siendo el mismo de antes.
+// ============================================================
+
+async function setSideTrackEncuesta(numero, ttl) {
+  numero = normalizePhone(numero);
+  storage.set(`sidetrack:${numero}`, 'encuestador');
+  const expireTime = Date.now() + (ttl * 1000);
+  expirations.set(`sidetrack:${numero}`, expireTime);
+  logger.info(`📊 Side-track encuestador activado: ${numero} (TTL: ${ttl}s)`);
+}
+
+async function getSideTrackEncuesta(numero) {
+  numero = normalizePhone(numero);
+  const expireTime = expirations.get(`sidetrack:${numero}`);
+  if (expireTime && Date.now() > expireTime) {
+    storage.delete(`sidetrack:${numero}`);
+    expirations.delete(`sidetrack:${numero}`);
+    return null;
+  }
+  return storage.get(`sidetrack:${numero}`) || null;
+}
+
+async function clearSideTrackEncuesta(numero) {
+  numero = normalizePhone(numero);
+  storage.delete(`sidetrack:${numero}`);
+  expirations.delete(`sidetrack:${numero}`);
+  logger.info(`📊 Side-track encuestador limpiado: ${numero}`);
+}
+
+// ============================================================
+// Cooldown post-encuesta
+// ------------------------------------------------------------
+// Tras finalizar una encuesta el dispatcher entra en modo
+// "silencio" durante un TTL configurable: ignora mensajes
+// entrantes para evitar que el bot dispare un saludo desde cero
+// inmediatamente después de la encuesta.
+// ============================================================
+
+async function setPostEncuestaCooldown(numero, ttl) {
+  numero = normalizePhone(numero);
+  storage.set(`post_encuesta:${numero}`, true);
+  const expireTime = Date.now() + (ttl * 1000);
+  expirations.set(`post_encuesta:${numero}`, expireTime);
+  logger.info(`🔇 Cooldown post-encuesta activado: ${numero} (TTL: ${ttl}s)`);
+}
+
+async function isPostEncuestaCooldown(numero) {
+  numero = normalizePhone(numero);
+  const expireTime = expirations.get(`post_encuesta:${numero}`);
+  if (!expireTime) return false;
+  if (Date.now() > expireTime) {
+    storage.delete(`post_encuesta:${numero}`);
+    expirations.delete(`post_encuesta:${numero}`);
+    return false;
+  }
+  return true;
+}
+
+async function clearPostEncuestaCooldown(numero) {
+  numero = normalizePhone(numero);
+  storage.delete(`post_encuesta:${numero}`);
+  expirations.delete(`post_encuesta:${numero}`);
+}
+
+// ============================================================
+// Deduplicación de webhooks por wamid
+// ------------------------------------------------------------
+// Meta y/o el proxy delante del dispatcher pueden entregar el
+// mismo webhook varias veces. Cacheamos los wamid procesados con
+// TTL corto para descartar duplicados sin reenviarlos a las apps.
+// ============================================================
+
+async function isWamidProcessed(wamid) {
+  if (!wamid) return false;
+  const expireTime = expirations.get(`wamid:${wamid}`);
+  if (!expireTime) return false;
+  if (Date.now() > expireTime) {
+    storage.delete(`wamid:${wamid}`);
+    expirations.delete(`wamid:${wamid}`);
+    return false;
+  }
+  return true;
+}
+
+async function markWamidProcessed(wamid, ttl) {
+  if (!wamid) return;
+  storage.set(`wamid:${wamid}`, true);
+  const expireTime = Date.now() + (ttl * 1000);
+  expirations.set(`wamid:${wamid}`, expireTime);
 }
 
 /**
@@ -317,4 +425,12 @@ module.exports = {
   setUltimoMensajeEntrante,
   getUltimoMensajeEntrante,
   isVentanaAbierta,
+  setSideTrackEncuesta,
+  getSideTrackEncuesta,
+  clearSideTrackEncuesta,
+  setPostEncuestaCooldown,
+  isPostEncuestaCooldown,
+  clearPostEncuestaCooldown,
+  isWamidProcessed,
+  markWamidProcessed,
 };

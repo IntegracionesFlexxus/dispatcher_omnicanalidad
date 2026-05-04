@@ -205,6 +205,32 @@ const enviarMediaSchema = Joi.object({
   ).optional(),
 });
 
+/**
+ * Schema para finalizar encuesta
+ */
+const finalizarEncuestaSchema = Joi.object({
+  motivo: Joi.string()
+    .valid('completada', 'cancelada', 'timeout', 'rechazada')
+    .optional()
+    .messages({
+      'any.only': 'Motivo debe ser: completada, cancelada, timeout o rechazada',
+    }),
+  survey_instance_id: Joi.number().integer().optional(),
+  mensaje_despedida: Joi.boolean().optional().default(false),
+});
+
+/**
+ * Schema para iniciar encuesta (registrar routing en Redis sin callback)
+ */
+const iniciarEncuestaSchema = Joi.object({
+  survey_instance_id: Joi.number().integer().optional(),
+  phase: Joi.string().max(50).optional(),
+  ttl_seconds: Joi.number().integer().min(60).max(86400).optional().messages({
+    'number.min': 'ttl_seconds debe ser >= 60',
+    'number.max': 'ttl_seconds debe ser <= 86400 (24h)',
+  }),
+});
+
 module.exports = {
   enviarMensajeSchema,
   transferirSchema,
@@ -213,4 +239,6 @@ module.exports = {
   webhookVerificationSchema,
   enviarTemplateSchema,
   enviarMediaSchema,
+  finalizarEncuestaSchema,
+  iniciarEncuestaSchema,
 };

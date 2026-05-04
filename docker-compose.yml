@@ -4,17 +4,69 @@ services:
     build:
       context: .
       target: runtime
-    image: fabreguesm/dispatcher_omnicanalidad-dispatcher:1.0.1
+    image: fabreguesm/dispatcher_omnicanalidad-dispatcher:1.0.35
     ports:
-      - "8082:8082"
+      - "${PORT:-8082}:${PORT:-8082}"
     environment:
-      - NODE_ENV=development
-    env_file:
-      - .env
-    volumes:
-      # Hot reload en desarrollo - montar código fuente
-      - ./src:/app/src
-      - ./logs:/app/logs
-    restart: unless-stopped
-    healthcheck:
-      disable: true
+      - NODE_ENV=${NODE_ENV:-development}
+      - PORT=${PORT:-8082}
+      - HOST=${HOST:-0.0.0.0}
+      - USE_REDIS=${USE_REDIS:-false}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_DB=${REDIS_DB:-0}
+      - WHATSAPP_TOKEN=${WHATSAPP_TOKEN:-EAAKTrzWzTJIBPZCpMRZC4ZCtqURcqjkOrMVAmBIb9BwSqbndmFQPhCDJzJMzZBUZBw9eN7sNZB91SSZBtZBZABmgLAh7JOP0PwJPZC4hvmFou8G4HVksyEkvOMltaFZAdmYAewQVWI0IwxvUz7MFzPBFD8ZBfLRlYjrZAOE5u0c4s9OWsTURRsGctjk2SGEAjmiWYaZARUEf2Ioe9N4wIAlUpYWpFGXhZBZCDrCkWMnCwlzfjxdhTHkP21r6ZCng7Knkc4Hz6J05lTCcvPZBooXiAbo71O1OWuAo0RMKsZD}
+      - PHONE_NUMBER_ID=${PHONE_NUMBER_ID}
+      - VERIFY_TOKEN=${VERIFY_TOKEN}
+      - WHATSAPP_APP_SECRET=${WHATSAPP_APP_SECRET}
+      - BOT_APP=${BOT_APP}
+      - ASESOR_APP=${ASESOR_APP}
+      - ENCUESTADOR_APP=${ENCUESTADOR_APP}
+      - ASESOR_CHANNEL_ID=${ASESOR_CHANNEL_ID:-1}
+      - ASESOR_API_KEY=${ASESOR_API_KEY}
+      - ENCUESTADOR_STATUS_URL=${ENCUESTADOR_STATUS_URL}
+      - ENCUESTADOR_STATUS_TIMEOUT_MS=${ENCUESTADOR_STATUS_TIMEOUT_MS:-3000}
+      - ENCUESTADOR_API_KEY=${ENCUESTADOR_API_KEY}
+      - ENCUESTADOR_ROUTING_TTL_SECONDS=${ENCUESTADOR_ROUTING_TTL_SECONDS:-600}
+      - API_KEY=${API_KEY}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+      - RATE_LIMIT_WINDOW_MS=${RATE_LIMIT_WINDOW_MS:-60000}
+      - RATE_LIMIT_MAX_REQUESTS=${RATE_LIMIT_MAX_REQUESTS:-100}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_FILE=${LOG_FILE:-logs/dispatcher.log}
+      - APP_TIMEOUT_MS=${APP_TIMEOUT_MS:-10000}
+      - WHATSAPP_TIMEOUT_MS=${WHATSAPP_TIMEOUT_MS:-5000}
+      - REDIS_TIMEOUT_MS=${REDIS_TIMEOUT_MS:-2000}
+      - CIRCUIT_BREAKER_TIMEOUT_MS=${CIRCUIT_BREAKER_TIMEOUT_MS:-10000}
+      - CIRCUIT_BREAKER_ERROR_THRESHOLD=${CIRCUIT_BREAKER_ERROR_THRESHOLD:-50}
+      - CIRCUIT_BREAKER_RESET_TIMEOUT_MS=${CIRCUIT_BREAKER_RESET_TIMEOUT_MS:-30000}
+      - WHATSAPP_REENGAGEMENT_TEMPLATE=abrir_conversacion
+    networks:
+      - traefik
+    deploy:
+      placement:
+        constraints:
+          - ${NODE}
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.${SERVICE_NAME}.entrypoints=web"
+        - "traefik.http.routers.${SERVICE_NAME}.rule=Host(`${DOMAIN_NAME}`)"
+        - "traefik.http.middlewares.${SERVICE_NAME}-http.redirectscheme.scheme=https"
+        - "traefik.http.routers.${SERVICE_NAME}-https.rule=Host(`${DOMAIN_NAME}`)"
+        - "traefik.http.routers.${SERVICE_NAME}-https.entrypoints=https"
+        - "traefik.http.routers.${SERVICE_NAME}-https.tls=true"
+        - "traefik.http.routers.${SERVICE_NAME}-https.tls.certresolver=myresolver"
+        - "traefik.http.services.${SERVICE_NAME}.loadbalancer.server.port=8082"     
+    logging:
+      driver: loki
+      options:
+       loki-url: ${LOKI_URL}
+
+networks:
+  traefik:
+    external:
+      name: traefik-network
