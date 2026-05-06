@@ -259,13 +259,30 @@ async function clearConversationId(numero) {
 }
 
 /**
- * Guardar timestamp del último mensaje entrante de un número
- * Se usa para determinar si la ventana de 24hs de WhatsApp está abierta
+ * Guardar timestamp del último mensaje entrante de un número.
+ * Se usa para determinar si la ventana de 24hs de WhatsApp está abierta.
+ *
+ * Importante: usar el timestamp REAL del mensaje (mensaje.timestamp del webhook
+ * de Meta, en segundos epoch). Si Meta hace retry de un webhook viejo (puede
+ * pasar hasta 7 días después), Date.now() haría parecer que la ventana está
+ * abierta cuando en realidad ya está cerrada del lado de Meta.
+ *
+ * Solo avanzamos: si ya tenemos un timestamp más nuevo, lo conservamos para
+ * que un retry tardío no nos retroceda.
+ *
  * @param {string} numero - Número de teléfono
+ * @param {number|string} [timestampSec] - Timestamp del mensaje en segundos epoch.
+ *   Si no se pasa, se usa Date.now() (para llamadores que no tienen el dato).
  */
-async function setUltimoMensajeEntrante(numero) {
+async function setUltimoMensajeEntrante(numero, timestampSec) {
   numero = normalizePhone(numero);
-  storage.set(`ultimo_mensaje:${numero}`, Date.now());
+  const nuevoMs = timestampSec ? Number(timestampSec) * 1000 : Date.now();
+  if (!Number.isFinite(nuevoMs) || nuevoMs <= 0) return;
+
+  const actualMs = storage.get(`ultimo_mensaje:${numero}`) || 0;
+  if (nuevoMs > actualMs) {
+    storage.set(`ultimo_mensaje:${numero}`, nuevoMs);
+  }
 }
 
 /**

@@ -10,7 +10,8 @@
       "Bash(ls -lah /d/Github/dispatcher_omnicanalidad/*.md)",
       "Bash(docker compose *)",
       "Bash(docker info *)",
-      "Bash(curl -s \"https://hub.docker.com/v2/repositories/fabreguesm/dispatcher_omnicanalidad-dispatcher/tags?page_size=20\")"
+      "Bash(curl -s \"https://hub.docker.com/v2/repositories/fabreguesm/dispatcher_omnicanalidad-dispatcher/tags?page_size=20\")",
+      "Bash(git *)"
     ],
     "deny": [],
     "ask": []

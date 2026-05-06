@@ -85,6 +85,9 @@ async function enviarAApp(appKey, body) {
   if (appKey === 'asesor' && config.asesor?.apiKey) {
     extraHeaders['X-API-Key'] = config.asesor.apiKey;
   }
+  if (appKey === 'encuestador' && config.encuestador?.apiKey) {
+    extraHeaders['X-API-Key'] = config.encuestador.apiKey;
+  }
 
   logger.info(logHttpRequest('POST', url, body));
 
@@ -330,6 +333,21 @@ async function enrutarMensaje(numero, body) {
 
     // 2. Routing principal (bot/asesor)
     let appKey = await redisService.getAppAsignada(numero);
+
+    // Sanear estado heredado: el routing principal nunca debería ser
+    // 'encuestador' (eso vive en el side-track). Si lo encontramos, fue
+    // contaminado por una transferencia legacy → limpiamos y tratamos
+    // como bot por defecto. Evita que el path principal mande raw_webhook
+    // al encuestador y reciba 400.
+    if (appKey === 'encuestador') {
+      logger.warn(logBox('Routing principal contaminado - Saneando', {
+        'Número': numero,
+        'Valor heredado': 'encuestador',
+        'Acción': 'Limpiando routing principal y cayendo a bot',
+      }, 'warning'));
+      await redisService.clearAppAsignada(numero);
+      appKey = 'bot';
+    }
 
     logger.info(logRouting(numero, null, appKey, 'Routing desde Redis'));
 
@@ -601,7 +619,36 @@ async function transferir(numero, appDestino, contexto = {}) {
 
   logger.info(logTransfer(numero, appAnterior, appDestino, contexto));
 
-  // Cambiar routing en Redis
+  // Caso especial: transferencia al encuestador.
+  //
+  // El encuestador NO debe pisar el routing principal (bot/asesor) porque es
+  // un detour temporal. Lo que era el path legacy aquí (setAppAsignada +
+  // enviarAApp con tipo=nueva_conversacion) dejaba el routing principal
+  // contaminado para siempre y enviaba un body que el encuestador no entiende
+  // (espera customer_phone, message). Delegamos a iniciarEncuesta() para
+  // levantar el side-track con TTL controlado.
+  if (appDestino === 'encuestador') {
+    const resultado = await iniciarEncuesta(numero, {
+      surveyInstanceId: contexto.survey_instance_id || null,
+      phase: contexto.phase || null,
+      ttlSeconds: contexto.ttl_seconds || null,
+    });
+
+    await redisService.incrementStats('transferencias');
+    await redisService.incrementStats(`transferencias_${appAnterior}_to_encuestador`);
+    transferencias.labels(appAnterior, 'encuestador').inc();
+
+    return {
+      anterior: appAnterior,
+      nueva: 'encuestador',
+      notificacion_enviada: resultado.ok,
+      sidetrack: true,
+      survey_instance_id: contexto.survey_instance_id || null,
+      ttl_seconds: resultado.ttl_seconds,
+    };
+  }
+
+  // Cambiar routing principal en Redis (asesor u otras apps)
   await redisService.setAppAsignada(numero, appDestino);
 
   // Construir notificación según la app destino

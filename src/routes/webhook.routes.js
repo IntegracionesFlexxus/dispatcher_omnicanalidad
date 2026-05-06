@@ -87,8 +87,11 @@ router.post(
         }
         await redisService.markWamidProcessed(mensaje.id, config.webhookDedupTtl);
 
-        // Registrar timestamp del mensaje entrante (para ventana de 24hs)
-        await redisService.setUltimoMensajeEntrante(mensaje.from);
+        // Registrar timestamp del mensaje entrante (para ventana de 24hs).
+        // Usar el timestamp real del mensaje (epoch segundos) y no Date.now(),
+        // así si Meta hace retry de un webhook viejo no abrimos falsamente
+        // la ventana del lado del dispatcher.
+        await redisService.setUltimoMensajeEntrante(mensaje.from, mensaje.timestamp);
 
         // Enrutar mensaje
         const resultado = await routerService.enrutarMensaje(mensaje.from, body);
