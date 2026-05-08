@@ -11,7 +11,8 @@
       "Bash(docker compose *)",
       "Bash(docker info *)",
       "Bash(curl -s \"https://hub.docker.com/v2/repositories/fabreguesm/dispatcher_omnicanalidad-dispatcher/tags?page_size=20\")",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(npm audit *)"
     ],
     "deny": [],
     "ask": []
